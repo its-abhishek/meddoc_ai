@@ -227,3 +227,5 @@ export default function UploadPage() {
     </div>
   );
 }
+
+// Patient dropdown loads from backend API
