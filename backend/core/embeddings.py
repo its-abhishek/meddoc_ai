@@ -41,3 +41,5 @@ def embed_texts(texts: List[str], batch_size: int = 32) -> List[List[float]]:
     model = get_model()
     embeddings = model.encode(texts, batch_size=batch_size, normalize_embeddings=True)
     return embeddings.tolist()
+
+# Thread limits set in celery_app.py for macOS
