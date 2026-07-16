@@ -251,3 +251,5 @@ async def get_all_documents(tenant_id: str):
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "monitoring"}
+
+# Uses redis.asyncio for non-blocking SSE streaming
