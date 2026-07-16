@@ -276,3 +276,5 @@ export default function MonitoringPage() {
 }
 
 // Historical events loaded on mount
+
+// SSE skips reconnect for completed pipelines
