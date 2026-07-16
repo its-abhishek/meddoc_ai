@@ -81,3 +81,5 @@ trap "kill $BACKEND_PID $WORKER_PID $MONITOR_PID $FRONTEND_PID 2>/dev/null; exit
 wait
 
 # Concurrency set to 1 for Groq rate limits
+
+# Uses docker compose v2 and .venv
