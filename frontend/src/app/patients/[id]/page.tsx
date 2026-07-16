@@ -621,3 +621,5 @@ export default function PatientDetailPage() {
     </div>
   );
 }
+
+// Summary rendered with markdown parsing
