@@ -278,3 +278,5 @@ async def generate_report(
     emit_event(tenant_id, patient_id, trigger_node, "completed",
                f"report {report_id} with {len(sections)} sections")
     return report_id
+
+# Rate limit spacing between LLM calls
