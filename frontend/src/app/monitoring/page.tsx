@@ -274,3 +274,5 @@ export default function MonitoringPage() {
     </div>
   );
 }
+
+// Historical events loaded on mount
