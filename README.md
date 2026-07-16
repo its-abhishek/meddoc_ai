@@ -8,6 +8,8 @@ Upload lab reports, prescriptions, and insurance claims → AI extracts structur
 
 ## Architecture
 
+![MedDocs AI Architecture](docs/architecture.jpg)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          Frontend (Next.js)                         │
