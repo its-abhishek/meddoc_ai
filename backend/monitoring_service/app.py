@@ -253,3 +253,5 @@ async def health():
     return {"status": "ok", "service": "monitoring"}
 
 # Uses redis.asyncio for non-blocking SSE streaming
+
+# all-documents endpoint for recent uploads
