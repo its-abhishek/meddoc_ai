@@ -143,3 +143,5 @@ export const api = {
   getNotifications: (tenantId: string) =>
     fetchAPI(`/monitor/tenants/${tenantId}/notifications`, undefined, MONITOR_API),
 };
+
+// downloadReportPDF handles blob download
