@@ -31,3 +31,5 @@ celery_app.conf.update(
 
 # Import tasks to register them
 import workers.tasks  # noqa
+
+# All thread limits set to 1 for sentence-transformers on ARM
