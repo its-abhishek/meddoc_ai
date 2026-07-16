@@ -79,3 +79,5 @@ echo "Press Ctrl+C to stop all services"
 # Trap to kill all on exit
 trap "kill $BACKEND_PID $WORKER_PID $MONITOR_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
 wait
+
+# Concurrency set to 1 for Groq rate limits
