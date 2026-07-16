@@ -110,3 +110,5 @@ def classify_document(text: str) -> str:
     import json
     parsed = json.loads(result)
     return parsed.get("doc_type", "unknown")
+
+# Rate limit: 3s min delay, 7 retries
