@@ -8,69 +8,56 @@ Upload lab reports, prescriptions, and insurance claims → AI extracts structur
 
 ## Architecture
 
-![MedDocs AI Architecture](docs/architecture.jpg)
+> Generate the architecture diagram at [eraser.io](https://eraser.io) — paste the code below into a new canvas.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          Frontend (Next.js)                         │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│  │ Patients │ │  Upload  │ │ Patient  │ │Monitoring│ │ Reports  │  │
-│  │  Home    │ │ Dropzone │ │  Detail  │ │Dashboard │ │ + PDF    │  │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ REST API
-┌──────────────────────────────▼──────────────────────────────────────┐
-│                     Backend API (FastAPI :8000)                      │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  /tenants  /patients  /documents  /query  /reports  /export  │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                              │                                       │
-│              ┌───────────────┼───────────────┐                      │
-│              ▼               ▼               ▼                      │
-│  ┌─────────────────┐ ┌────────────┐ ┌──────────────────┐           │
-│  │  Celery Worker  │ │ Monitoring │ │  RAG Query Agent │           │
-│  │  (concurrency=1)│ │  Service   │ │  (vector search) │           │
-│  └────────┬────────┘ │   :8001    │ └──────────────────┘           │
-│           │          │  SSE + Redis│                                 │
-│           ▼          └────────────┘                                 │
-│  ┌─────────────────────────────────────┐                           │
-│  │       LangGraph Pipeline            │                           │
-│  │                                     │                           │
-│  │  ┌─────────┐    ┌──────────────┐   │                           │
-│  │  │ Planner │───▶│  Extractors  │   │                           │
-│  │  │ (classify│   │ lab/rx/claim │   │                           │
-│  │  └─────────┘    └──────┬───────┘   │                           │
-│  │                        │           │                           │
-│  │                   ┌────▼────┐      │                           │
-│  │                   │Verifier │      │                           │
-│  │                   └────┬────┘      │                           │
-│  │              ┌─────────┼─────────┐ │                           │
-│  │              ▼         ▼         ▼ │                           │
-│  │          ┌───────┐ ┌───────┐ ┌────┤                           │
-│  │          │Persist│ │Retry  │ │M.R.│                           │
-│  │          └───┬───┘ └───────┘ └────┘                           │
-│  │              ▼                                                  │
-│  │          ┌────────┐                                             │
-│  │          │Chunk + │                                             │
-│  │          │Embed   │                                             │
-│  │          └───┬────┘                                             │
-│  │              ▼                                                  │
-│  │          ┌─────────┐                                            │
-│  │          │Finalize │                                            │
-│  │          └─────────┘                                            │
-│  └─────────────────────────────────────┘                           │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────────────┐
-│                         Infrastructure                               │
-│  ┌──────────────────┐  ┌──────────┐  ┌─────────────────────┐       │
-│  │ PostgreSQL +     │  │  Redis   │  │     File Storage     │       │
-│  │ pgvector (5433)  │  │  (6379)  │  │  backend/storage/    │       │
-│  └──────────────────┘  └──────────┘  └─────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────┘
+```text
+direction down
+
+Frontend [icon: nextjs, color: blue] {
+  Patients_Home [icon: people]
+  Upload_Dropzone [icon: upload]
+  Patient_Detail [icon: person]
+  Monitoring_Dashboard [icon: dashboard]
+  Reports_PDF [icon: description]
+}
+
+Backend [icon: fastapi, color: green] {
+  REST_API [icon: api, label: "REST API :8000"]
+  Celery_Worker [icon: queue, label: "Celery Worker\nconcurrency=1"]
+  Monitoring_Service [icon: monitor, label: "Monitoring :8001\nSSE + Redis"]
+  RAG_Query [icon: search, label: "RAG Query Agent"]
+}
+
+Pipeline [icon: workflow, color: purple] {
+  Planner [icon: classify, label: "Planner\nclassify type"]
+  Extractors [icon: extract, label: "Extractors\nlab/rx/claims"]
+  Verifier [icon: verify, label: "Verifier"]
+  Persist [icon: database, label: "Persist"]
+  Chunk_Embed [icon: embed, label: "Chunk + Embed"]
+  Finalize [icon: check, label: "Finalize"]
+}
+
+Infrastructure [icon: cloud, color: gray] {
+  PostgreSQL [icon: postgres, label: "PostgreSQL + pgvector\n:5433"]
+  Redis [icon: redis, label: "Redis\n:6379"]
+  FileStorage [icon: folder, label: "File Storage"]
+}
+
+External [icon: external, color: orange] {
+  Groq [icon: groq, label: "Groq API\nLlama 3.3"]
+  HuggingFace [icon: huggingface, label: "BGE-small\nembedding"]
+}
+
+Frontend > Backend: REST API
+Backend > Infrastructure: read/write
+Celery_Worker > Pipeline: process
+Pipeline > Groq: LLM calls
+Pipeline > HuggingFace: embed
+Pipeline > PostgreSQL: store vectors
+Monitoring_Service > Redis: subscribe
 ```
 
-## Tech Stack
+### Tech Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
