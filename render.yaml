@@ -5,14 +5,6 @@ services:
     runtime: docker
     dockerfilePath: Dockerfile.backend
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: meddocs-db
-          property: connectionString
-      - key: DATABASE_URL_SYNC
-        fromDatabase:
-          name: meddocs-db
-          property: connectionString
       - key: GROQ_REASONING_MODEL
         value: llama-3.1-8b-instant
       - key: GROQ_CLASSIFICATION_MODEL
@@ -34,14 +26,6 @@ services:
     runtime: docker
     dockerfilePath: Dockerfile.worker
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: meddocs-db
-          property: connectionString
-      - key: DATABASE_URL_SYNC
-        fromDatabase:
-          name: meddocs-db
-          property: connectionString
       - key: GROQ_REASONING_MODEL
         value: llama-3.1-8b-instant
       - key: GROQ_CLASSIFICATION_MODEL
@@ -66,9 +50,3 @@ services:
         value: https://meddocs-api.onrender.com
     healthCheckPath: /
     autoDeploy: true
-
-  # PostgreSQL Database
-  - type: postgresql
-    name: meddocs-db
-    database: meddocs
-    ipAllowList: []
