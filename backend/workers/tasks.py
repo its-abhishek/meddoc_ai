@@ -60,12 +60,8 @@ def process_document(self, document_id: str, tenant_id: str, patient_id: str):
                 api_key=_s.CLOUDINARY_API_KEY,
                 api_secret=_s.CLOUDINARY_API_SECRET,
             )
-            # Try signed URL first, fallback to unsigned
-            url, _ = cu.cloudinary_url(file_path, resource_type="raw", sign_url=True, secure=True)
+            url, _ = cu.cloudinary_url(file_path, resource_type="raw", secure=True)
             resp = requests.get(url)
-            if resp.status_code != 200:
-                url, _ = cu.cloudinary_url(file_path, resource_type="raw", sign_url=False, secure=True)
-                resp = requests.get(url)
             resp.raise_for_status()
             suffix = os.path.splitext(doc.source_filename)[1] if doc.source_filename else ".pdf"
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)

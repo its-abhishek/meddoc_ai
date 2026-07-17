@@ -23,17 +23,17 @@ def upload_file(file_bytes: bytes, filename: str, doc_id: str, tenant_id: str) -
         public_id=public_id,
         folder="meddocs/documents",
         resource_type="raw",
+        type="upload",
     )
     return result["public_id"]
 
 
 def get_file_url(public_id: str) -> str:
-    """Get a signed URL for the file."""
+    """Get a public URL for the file."""
     _get_config()
     url, _ = cloudinary.utils.cloudinary_url(
         public_id,
         resource_type="raw",
-        sign_url=True,
         secure=True,
     )
     return url
