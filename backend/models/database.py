@@ -6,21 +6,46 @@ from config import get_settings
 
 settings = get_settings()
 
-# Async engine for FastAPI
-engine = create_async_engine(settings.get_database_url(), echo=False, pool_size=20, max_overflow=10)
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+_engine = None
+_async_session_factory = None
+_sync_engine = None
+_sync_session_factory = None
 
-# Sync engine for Celery worker
-sync_engine = create_engine(settings.get_database_url_sync(), echo=False, pool_size=5, max_overflow=5)
-sync_session_factory = sessionmaker(bind=sync_engine)
+
+def _get_async_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_async_engine(settings.get_database_url(), echo=False, pool_size=20, max_overflow=10)
+    return _engine
+
+
+def _get_async_session_factory():
+    global _async_session_factory
+    if _async_session_factory is None:
+        _async_session_factory = async_sessionmaker(_get_async_engine(), class_=AsyncSession, expire_on_commit=False)
+    return _async_session_factory
+
+
+def _get_sync_engine():
+    global _sync_engine
+    if _sync_engine is None:
+        _sync_engine = create_engine(settings.get_database_url_sync(), echo=False, pool_size=5, max_overflow=5)
+    return _sync_engine
+
+
+def get_sync_session_factory():
+    global _sync_session_factory
+    if _sync_session_factory is None:
+        _sync_session_factory = sessionmaker(bind=_get_sync_engine())
+    return _sync_session_factory
 
 
 class Base(DeclarativeBase):
     pass
 
 
-async def get_db() -> AsyncSession:
-    async with async_session() as session:
+async def get_db():
+    async with _get_async_session_factory()() as session:
         try:
             yield session
             await session.commit()
@@ -29,19 +54,8 @@ async def get_db() -> AsyncSession:
             raise
 
 
-def get_sync_db():
-    session = sync_session_factory()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
 async def init_db():
+    engine = _get_async_engine()
     async with engine.begin() as conn:
         await conn.execute(__import__('sqlalchemy').text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
@@ -50,5 +64,3 @@ async def init_db():
                 "ALTER TABLE documents ADD COLUMN IF NOT EXISTS clinical_notes JSONB DEFAULT '[]'::jsonb"
             )
         )
-
-# pgvector extension created on startup

@@ -7,7 +7,7 @@ import cloudinary
 from datetime import datetime
 from workers.celery_app import celery_app
 from config import get_settings
-from models.database import sync_session_factory
+from models.database import get_sync_session_factory
 from models.models import (
     Document, LabResult, Prescription, Claim,
     DocumentChunk, ProcessingTrace, ManualReviewQueue, RiskFlag,
@@ -33,7 +33,7 @@ def get_graph():
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=10)
 def process_document(self, document_id: str, tenant_id: str, patient_id: str):
-    session = sync_session_factory()
+    session = get_sync_session_factory()()
     try:
         doc = session.execute(
             select(Document).where(Document.id == document_id)
@@ -237,7 +237,7 @@ def _persist_data(session, state, document_id, tenant_id, patient_id):
 
 def _run_risk_flagging_sync(tenant_id: str, patient_id: str, document_id: str):
     try:
-        session = sync_session_factory()
+        session = get_sync_session_factory()()
         try:
             from pipeline.agents.risk_flagger import check_interaction_rules
 
@@ -299,7 +299,7 @@ def _run_risk_flagging_sync(tenant_id: str, patient_id: str, document_id: str):
 @celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
 def generate_report_task(self, tenant_id: str, patient_id: str):
     """Background task for report generation — runs outside the HTTP request."""
-    session = sync_session_factory()
+    session = get_sync_session_factory()()
     try:
         from pipeline.agents.report_generator import generate_report_sync
         report_id = generate_report_sync(tenant_id, patient_id, session)
