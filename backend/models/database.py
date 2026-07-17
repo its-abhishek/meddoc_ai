@@ -27,9 +27,14 @@ def _get_async_engine():
     global _engine
     if _engine is None:
         url = _clean_url(settings.get_database_url())
+        parsed = urlparse(url)
+        is_remote = parsed.hostname not in ("localhost", "127.0.0.1", None)
+        connect_args = {}
+        if is_remote:
+            connect_args["ssl"] = _ssl.create_default_context()
         _engine = create_async_engine(
             url, echo=False, pool_size=20, max_overflow=10,
-            connect_args={"ssl": _ssl.create_default_context()},
+            connect_args=connect_args,
         )
     return _engine
 
