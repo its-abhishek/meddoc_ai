@@ -1278,7 +1278,7 @@ async def health():
 
 # ── Internal helpers ───────────────────────────────────────────
 
-async def await _log_audit(tenant_id, user_id, patient_id, action, db):
+async def _log_audit(tenant_id, user_id, patient_id, action, db):
     try:
         audit = AuditLog(
             id=str(uuid.uuid4()),
