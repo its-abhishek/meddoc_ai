@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import uuid
+import cloudinary
 from datetime import datetime
 from workers.celery_app import celery_app
 from config import get_settings
@@ -50,10 +51,21 @@ def process_document(self, document_id: str, tenant_id: str, patient_id: str):
         file_path = doc.raw_storage_path
         # If file_path is a Cloudinary public_id, download to temp file
         if not os.path.exists(file_path):
-            from utils.cloud_storage import get_file_url
+            import cloudinary.utils as cu
             import requests, tempfile
-            url = get_file_url(file_path)
+            from config import get_settings
+            _s = get_settings()
+            cloudinary.config(
+                cloud_name=_s.CLOUDINARY_CLOUD_NAME,
+                api_key=_s.CLOUDINARY_API_KEY,
+                api_secret=_s.CLOUDINARY_API_SECRET,
+            )
+            # Try signed URL first, fallback to unsigned
+            url, _ = cu.cloudinary_url(file_path, resource_type="raw", sign_url=True, secure=True)
             resp = requests.get(url)
+            if resp.status_code != 200:
+                url, _ = cu.cloudinary_url(file_path, resource_type="raw", sign_url=False, secure=True)
+                resp = requests.get(url)
             resp.raise_for_status()
             suffix = os.path.splitext(doc.source_filename)[1] if doc.source_filename else ".pdf"
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
