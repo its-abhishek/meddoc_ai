@@ -1,4 +1,6 @@
 """Database connection and session management."""
+import ssl as _ssl
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -12,10 +14,23 @@ _sync_engine = None
 _sync_session_factory = None
 
 
+def _clean_url(url: str) -> str:
+    """Strip sslmode param (asyncpg doesn't support it, uses ssl param instead)."""
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    params.pop("sslmode", None)
+    new_query = urlencode(params, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
+
+
 def _get_async_engine():
     global _engine
     if _engine is None:
-        _engine = create_async_engine(settings.get_database_url(), echo=False, pool_size=20, max_overflow=10)
+        url = _clean_url(settings.get_database_url())
+        _engine = create_async_engine(
+            url, echo=False, pool_size=20, max_overflow=10,
+            connect_args={"ssl": _ssl.create_default_context()},
+        )
     return _engine
 
 
