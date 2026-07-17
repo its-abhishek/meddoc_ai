@@ -1,5 +1,8 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+_env_file = str(Path(__file__).resolve().parent.parent / ".env")
 
 
 class Settings(BaseSettings):
@@ -15,7 +18,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 20
 
     class Config:
-        env_file = ".env"
+        env_file = _env_file
 
 
 @lru_cache
