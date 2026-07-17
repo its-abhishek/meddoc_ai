@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
 import { api } from "@/lib/api";
+import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 
 function getTenantId(): string {
   return localStorage.getItem("tenantId") || "";
@@ -29,6 +30,8 @@ export default function UploadPage() {
   const [pipelineEvents, setPipelineEvents] = useState<PipelineEvent[]>([]);
   const [rateLimited, setRateLimited] = useState(false);
   const [retryCountdown, setRetryCountdown] = useState(0);
+  const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
+  const [deletingDocument, setDeletingDocument] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -110,13 +113,17 @@ export default function UploadPage() {
     }, 1000);
   }
 
-  async function deleteDoc(docId: string) {
-    if (!confirm("Delete this document and all extracted data?")) return;
+  async function confirmDeleteDocument() {
+    if (!documentToDelete) return;
+    setDeletingDocument(true);
     try {
-      await api.deleteDocument(getTenantId(), docId);
-      setResults((prev) => prev.filter((r) => r.docId !== docId));
+      await api.deleteDocument(getTenantId(), documentToDelete);
+      setResults((prev) => prev.filter((r) => r.docId !== documentToDelete));
+      setDocumentToDelete(null);
     } catch (e: any) {
       alert("Delete failed: " + e.message);
+    } finally {
+      setDeletingDocument(false);
     }
   }
 
@@ -275,7 +282,7 @@ export default function UploadPage() {
                   </button>
                 )}
                 {r.docId && (
-                  <button onClick={() => deleteDoc(r.docId!)}
+                  <button onClick={() => setDocumentToDelete(r.docId!)}
                     className="text-xs text-red-500 hover:text-red-700 font-medium">
                     Delete
                   </button>
@@ -291,6 +298,12 @@ export default function UploadPage() {
           </p>
         </div>
       )}
+      <ConfirmDeleteDialog
+        open={documentToDelete !== null}
+        onCancel={() => setDocumentToDelete(null)}
+        onConfirm={confirmDeleteDocument}
+        isDeleting={deletingDocument}
+      />
     </div>
   );
 }

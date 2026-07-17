@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "@/lib/api";
+import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 
 function getTenantId(): string {
   return localStorage.getItem("tenantId") || "";
@@ -38,6 +39,8 @@ export default function MonitoringPage() {
   const [pipelineDone, setPipelineDone] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
   const [retryCountdown, setRetryCountdown] = useState(0);
+  const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
+  const [deletingDocument, setDeletingDocument] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -150,20 +153,28 @@ export default function MonitoringPage() {
     }
   }
 
-  async function deleteDoc(docId: string, e: React.MouseEvent) {
+  function requestDeleteDocument(docId: string, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!confirm("Delete this document and all extracted data?")) return;
+    setDocumentToDelete(docId);
+  }
+
+  async function confirmDeleteDocument() {
+    if (!documentToDelete) return;
+    setDeletingDocument(true);
     try {
-      await api.deleteDocument(getTenantId(), docId);
-      setActiveDocs((prev) => prev.filter((d) => d.document_id !== docId));
-      setAllDocs((prev) => prev.filter((d) => d.document_id !== docId));
-      if (selectedDoc === docId) {
+      await api.deleteDocument(getTenantId(), documentToDelete);
+      setActiveDocs((prev) => prev.filter((d) => d.document_id !== documentToDelete));
+      setAllDocs((prev) => prev.filter((d) => d.document_id !== documentToDelete));
+      if (selectedDoc === documentToDelete) {
         closeSSE();
         setSelectedDoc(null);
         setAllEvents([]);
       }
+      setDocumentToDelete(null);
     } catch (err: any) {
       alert("Delete failed: " + err.message);
+    } finally {
+      setDeletingDocument(false);
     }
   }
 
@@ -223,7 +234,7 @@ export default function MonitoringPage() {
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(d.current_status)}`}>
                           {d.current_node}
                         </span>
-                        <span onClick={(e) => deleteDoc(d.document_id, e)}
+                        <span onClick={(e) => requestDeleteDocument(d.document_id, e)}
                           className="text-xs text-red-500 hover:text-red-700 font-medium cursor-pointer">Delete</span>
                       </div>
                     </div>
@@ -252,7 +263,7 @@ export default function MonitoringPage() {
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(d.current_status)}`}>
                           {d.current_status}
                         </span>
-                        <span onClick={(e) => deleteDoc(d.document_id, e)}
+                        <span onClick={(e) => requestDeleteDocument(d.document_id, e)}
                           className="text-xs text-red-500 hover:text-red-700 font-medium cursor-pointer">Delete</span>
                       </div>
                     </div>
@@ -349,6 +360,12 @@ export default function MonitoringPage() {
           </div>
         </div>
       </div>
+      <ConfirmDeleteDialog
+        open={documentToDelete !== null}
+        onCancel={() => setDocumentToDelete(null)}
+        onConfirm={confirmDeleteDocument}
+        isDeleting={deletingDocument}
+      />
     </div>
   );
 }

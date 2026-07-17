@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 
 function getTenantId(): string {
   return localStorage.getItem("tenantId") || "";
@@ -71,6 +72,8 @@ export default function PatientDetailPage() {
   const [pdfDownloading, setPdfDownloading] = useState(false);
   const [documents, setDocuments] = useState<any[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
+  const [deletingDocument, setDeletingDocument] = useState(false);
 
   useEffect(() => { loadData(); loadDocuments(); }, [patientId]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
@@ -99,13 +102,17 @@ export default function PatientDetailPage() {
     setDocsLoading(false);
   }
 
-  async function deleteDoc(docId: string) {
-    if (!confirm("Delete this document and all extracted data?")) return;
+  async function confirmDeleteDocument() {
+    if (!documentToDelete) return;
+    setDeletingDocument(true);
     try {
-      await api.deleteDocument(getTenantId(), docId);
-      setDocuments((prev) => prev.filter((d: any) => d.id !== docId));
+      await api.deleteDocument(getTenantId(), documentToDelete);
+      setDocuments((prev) => prev.filter((d: any) => d.id !== documentToDelete));
+      setDocumentToDelete(null);
     } catch (e: any) {
       alert("Delete failed: " + e.message);
+    } finally {
+      setDeletingDocument(false);
     }
   }
 
@@ -332,7 +339,7 @@ export default function PatientDetailPage() {
                       {d.created_at ? new Date(d.created_at).toLocaleDateString() : "-"}
                     </td>
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => deleteDoc(d.id)}
+                      <button onClick={() => setDocumentToDelete(d.id)}
                         className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
                     </td>
                   </tr>
@@ -717,6 +724,12 @@ export default function PatientDetailPage() {
           )}
         </div>
       )}
+      <ConfirmDeleteDialog
+        open={documentToDelete !== null}
+        onCancel={() => setDocumentToDelete(null)}
+        onConfirm={confirmDeleteDocument}
+        isDeleting={deletingDocument}
+      />
     </div>
   );
 }

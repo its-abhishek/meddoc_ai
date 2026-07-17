@@ -363,7 +363,10 @@ async def delete_document(tenant_id: str, document_id: str, db: AsyncSession = D
 
     await db.delete(doc)
     await db.flush()
-    await _log_audit(tenant_id, document_id, doc.patient_id, "delete_document", db)
+    # There is no authenticated user in this API yet. Passing the document ID
+    # as user_id violates audit_log's foreign key to users and rolls back the
+    # entire deletion transaction.
+    await _log_audit(tenant_id, None, doc.patient_id, "delete_document", db)
     await db.flush()
     return {"deleted": document_id}
 
