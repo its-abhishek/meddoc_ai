@@ -13,10 +13,6 @@ services:
         fromDatabase:
           name: meddocs-db
           property: connectionString
-      - key: REDIS_URL
-        sync: false
-      - key: GROQ_API_KEY
-        sync: false
       - key: GROQ_REASONING_MODEL
         value: llama-3.1-8b-instant
       - key: GROQ_CLASSIFICATION_MODEL
@@ -24,11 +20,11 @@ services:
       - key: EMBEDDING_MODEL
         value: BAAI/bge-small-en-v1.5
       - key: EMBEDDING_DIM
-        value: 384
+        value: "384"
       - key: STORAGE_PATH
         value: /tmp/storage
       - key: PORT
-        value: 8000
+        value: "8000"
     healthCheckPath: /docs
     autoDeploy: true
 
@@ -46,10 +42,6 @@ services:
         fromDatabase:
           name: meddocs-db
           property: connectionString
-      - key: REDIS_URL
-        sync: false
-      - key: GROQ_API_KEY
-        sync: false
       - key: GROQ_REASONING_MODEL
         value: llama-3.1-8b-instant
       - key: GROQ_CLASSIFICATION_MODEL
@@ -57,7 +49,7 @@ services:
       - key: EMBEDDING_MODEL
         value: BAAI/bge-small-en-v1.5
       - key: EMBEDDING_DIM
-        value: 384
+        value: "384"
       - key: STORAGE_PATH
         value: /tmp/storage
     autoDeploy: true
@@ -76,7 +68,7 @@ services:
     autoDeploy: true
 
   # PostgreSQL Database
-  - type: pgsql
+  - type: postgresql
     name: meddocs-db
     database: meddocs
     ipAllowList: []
