@@ -8,6 +8,7 @@ class ExtractionResult(BaseModel):
     lab_results: List[Dict[str, Any]] = Field(default_factory=list)
     prescriptions: List[Dict[str, Any]] = Field(default_factory=list)
     claims: List[Dict[str, Any]] = Field(default_factory=list)
+    clinical_notes: List[str] = Field(default_factory=list)
 
 
 class GraphState(BaseModel):
@@ -26,6 +27,7 @@ class GraphState(BaseModel):
     extraction_attempts: int = 0
     max_extraction_attempts: int = 2
     chunks_data: List[Dict[str, Any]] = Field(default_factory=list)
+    manual_review_reason: str = ""
 
     class Config:
         arbitrary_types_allowed = True

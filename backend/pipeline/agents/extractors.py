@@ -50,6 +50,36 @@ CLAIMS_LLM_SYSTEM = (
     "}"
 )
 
+DISCHARGE_SUMMARY_SYSTEM = (
+    "You are a medical discharge summary extraction agent. Extract ALL structured data from this "
+    "discharge summary. Discharge summaries contain lab values, medications, and clinical notes "
+    "often mixed together, sometimes at different time points (e.g. admission vs discharge).\n\n"
+    "For lab results: extract test_name, value (numeric), unit, reference_range, test_date.\n"
+    "  - If the same test appears at multiple time points (admission AND discharge), extract ALL "
+    "occurrences as separate entries with their respective dates.\n"
+    "  - If a reference_range is not printed in the document, leave it empty (the tool will look it up).\n"
+    "  - Use the get_reference_range tool if unsure about a range.\n\n"
+    "For medications: extract drug_name, dosage, frequency, start_date (if stated, e.g. 'since 2025-11-02'), "
+    "prescribing_doctor.\n"
+    "  - Medications may appear in narrative text, not just tables. Extract from prose.\n"
+    "  - Include start_date when the text states when the medication was started.\n\n"
+    "For clinical_notes: extract standalone findings, plan items, or follow-up gaps worth flagging.\n"
+    "  - Examples: 'no HbA1c recheck scheduled since 2026-01-15', 'patient counseled on diet'\n"
+    "  - Only include clinically meaningful notes, not boilerplate text.\n\n"
+    "Return JSON: {\n"
+    '  "lab_results": [\n'
+    '    {"test_name": "...", "value": 42.5, "unit": "mg/dL", "reference_range": "0-40", '
+    '"test_date": "2024-01-15"}\n'
+    "  ],\n"
+    '  "medications": [\n'
+    '    {"drug_name": "...", "dosage": "...", "frequency": "...", '
+    '"start_date": "2024-01-15", "prescribing_doctor": "..."}\n'
+    "  ],\n"
+    '  "clinical_notes": ["finding or plan item text"]\n'
+    "}\n\n"
+    "Do NOT hallucinate values. Set missing fields to null. Extract every instance of a repeated test."
+)
+
 STANDARD_REFERENCE_RANGES = {
     "hemoglobin": {"male": "13.5-17.5", "female": "12.0-15.5"},
     "white blood cell count": "4.5-11.0",
@@ -253,3 +283,58 @@ def _trace(state, node: str, start: float, output: str = ""):
         "latency_ms": latency_ms,
         "output_summary": output[:500],
     })
+
+
+def extract_discharge_summary_agent(state) -> None:
+    import time
+    start = time.time()
+    emit_event(state.tenant_id, state.document_id, "extract_discharge_summary", "started")
+
+    error_context = ""
+    if state.validation_errors:
+        error_context = f"\n\nPrevious validation issues: {'; '.join(state.validation_errors)}"
+
+    max_attempts = state.max_extraction_attempts
+    for attempt in range(max_attempts):
+        try:
+            result = call_llm_structured(
+                prompt=f"Extract all structured data from this discharge summary:\n\n{state.raw_text[:8000]}{error_context}",
+                system_prompt=DISCHARGE_SUMMARY_SYSTEM,
+            )
+            parsed = json.loads(result)
+
+            lab_results = parsed.get("lab_results", [])
+            for r in lab_results:
+                if not r.get("reference_range"):
+                    looked_up = get_reference_range(r.get("test_name", ""))
+                    if looked_up:
+                        r["reference_range"] = looked_up
+                r["flagged_abnormal"] = _check_abnormal(r)
+
+            medications = parsed.get("medications", [])
+            clinical_notes = parsed.get("clinical_notes", [])
+
+            state.extraction_result = ExtractionResult(
+                lab_results=lab_results,
+                prescriptions=medications,
+                clinical_notes=clinical_notes,
+            )
+            state.extraction_attempts = attempt + 1
+
+            summary = (
+                f"{len(lab_results)} lab results, {len(medications)} medications, "
+                f"{len(clinical_notes)} clinical notes"
+            )
+            _trace(state, "extract_discharge_summary", start, summary)
+            emit_event(
+                state.tenant_id, state.document_id, "extract_discharge_summary", "completed", summary
+            )
+            return
+        except Exception as e:
+            state.validation_errors.append(f"Attempt {attempt+1}: {str(e)}")
+            logger.warning(f"Discharge summary extraction attempt {attempt+1} failed: {e}")
+
+    emit_event(
+        state.tenant_id, state.document_id, "extract_discharge_summary", "failed",
+        "; ".join(state.validation_errors),
+    )

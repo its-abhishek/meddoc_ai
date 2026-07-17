@@ -119,7 +119,7 @@ async def multi_step_query(
             )
             check_prompt = f"Context:\n{context[:4000]}\n\nQuestion: {current_question}"
             try:
-                check_result = call_llm_structured(prompt=check_prompt, system_prompt=system_check)
+                check_result = call_llm_structured(prompt=check_prompt, system_prompt=system_check, rate_limit=False)
                 check = json.loads(check_result)
                 if not check.get("can_answer", True):
                     clarifying = check.get("clarifying_question")
@@ -146,6 +146,7 @@ async def multi_step_query(
         answer = call_llm(
             prompt=f"Context:\n{context[:6000]}\n\nQuestion: {current_question}",
             system_prompt=system,
+            rate_limit=False,
         )
 
         if "don't have that information" not in answer.lower() or round_num == max_retrieval_rounds - 1:

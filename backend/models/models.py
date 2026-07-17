@@ -51,6 +51,7 @@ class Document(Base):
     source_filename = Column(String(500), nullable=False)
     upload_status = Column(String(50), default="queued")
     raw_storage_path = Column(String(1000))
+    clinical_notes = Column(JSONB, default=list)
     created_at = Column(DateTime, default=utcnow)
 
 

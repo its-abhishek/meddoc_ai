@@ -99,6 +99,14 @@ def process_document(self, document_id: str, tenant_id: str, patient_id: str):
 def _persist_data(session, state, document_id, tenant_id, patient_id):
     extraction = state.get("extraction_result")
     if not extraction:
+        if state.get("doc_type") == "needs_manual_review":
+            session.add(ManualReviewQueue(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                document_id=document_id,
+                reason=state.get("manual_review_reason", "Unknown classification"),
+            ))
+            session.commit()
         return
 
     session.execute(sqldelete(LabResult).where(LabResult.document_id == document_id))
@@ -134,9 +142,10 @@ def _persist_data(session, state, document_id, tenant_id, patient_id):
 
     for rx in extraction_dict.get("prescriptions", []):
         prescribed_date = None
-        if rx.get("prescribed_date"):
+        if rx.get("prescribed_date") or rx.get("start_date"):
+            date_str = rx.get("prescribed_date") or rx.get("start_date")
             try:
-                prescribed_date = datetime.fromisoformat(rx["prescribed_date"].replace("Z", "+00:00"))
+                prescribed_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
             except (ValueError, TypeError):
                 pass
 
@@ -171,6 +180,14 @@ def _persist_data(session, state, document_id, tenant_id, patient_id):
             claim_date=claim_date,
         ))
 
+    clinical_notes = extraction_dict.get("clinical_notes", [])
+    if clinical_notes:
+        doc = session.execute(
+            select(Document).where(Document.id == document_id)
+        ).scalar_one_or_none()
+        if doc:
+            doc.clinical_notes = clinical_notes
+
     chunks_data = state.get("chunks_data", [])
     for chunk in chunks_data:
         session.add(DocumentChunk(
@@ -187,7 +204,7 @@ def _persist_data(session, state, document_id, tenant_id, patient_id):
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
             document_id=document_id,
-            reason="; ".join(state.get("validation_errors", ["Unknown classification"])),
+            reason=state.get("manual_review_reason", "Unknown classification"),
         ))
 
     session.commit()
@@ -252,3 +269,21 @@ def _run_risk_flagging_sync(tenant_id: str, patient_id: str, document_id: str):
     except Exception as e:
         logger.error(f"Risk flagging failed: {e}")
         emit_event(tenant_id, document_id, "risk_flagging", "failed", str(e))
+
+
+@celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
+def generate_report_task(self, tenant_id: str, patient_id: str):
+    """Background task for report generation — runs outside the HTTP request."""
+    session = sync_session_factory()
+    try:
+        from pipeline.agents.report_generator import generate_report_sync
+        report_id = generate_report_sync(tenant_id, patient_id, session)
+        if report_id:
+            logger.info(f"Report {report_id} generated for patient {patient_id}")
+        else:
+            logger.warning(f"Report generation returned None for patient {patient_id}")
+    except Exception as e:
+        logger.error(f"Report generation failed for patient {patient_id}: {e}")
+        emit_event(tenant_id, patient_id, "report_generation", "failed", str(e))
+    finally:
+        session.close()

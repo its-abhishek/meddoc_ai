@@ -45,5 +45,10 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.execute(__import__('sqlalchemy').text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            __import__('sqlalchemy').text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS clinical_notes JSONB DEFAULT '[]'::jsonb"
+            )
+        )
 
 # pgvector extension created on startup

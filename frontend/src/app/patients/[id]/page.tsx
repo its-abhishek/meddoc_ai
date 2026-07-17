@@ -136,13 +136,43 @@ export default function PatientDetailPage() {
   async function loadOrGenerateReport() {
     setReportLoading(true);
     try {
-      const gen = await api.generateReport(getTenantId(), patientId);
-      const r = await api.getReport(getTenantId(), gen.report_id);
-      setReport(r);
+      // Check if a report already exists
+      const existing = await api.getLatestReport(getTenantId(), patientId);
+      if (existing && existing.id) {
+        setReport(existing);
+        setReportLoading(false);
+        return;
+      }
+
+      // Kick off background generation
+      await api.generateReport(getTenantId(), patientId);
+
+      // Poll until the report appears (max 60s)
+      let attempts = 0;
+      const poll = async (): Promise<void> => {
+        attempts++;
+        if (attempts > 30) {
+          setReportLoading(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const latest = await api.getLatestReport(getTenantId(), patientId);
+          if (latest && latest.id) {
+            setReport(latest);
+            setReportLoading(false);
+          } else {
+            await poll();
+          }
+        } catch {
+          await poll();
+        }
+      };
+      await poll();
     } catch (e: any) {
       console.error("Report error:", e);
+      setReportLoading(false);
     }
-    setReportLoading(false);
   }
 
   function startEditBlock(block: ReportBlock) {

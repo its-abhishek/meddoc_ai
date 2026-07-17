@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from core.llm_client import call_llm_structured, call_llm
@@ -270,7 +271,7 @@ async def generate_report(
     for idx, section in enumerate(sections):
         block_type = section["block_type"]
         if idx > 0:
-            time.sleep(1)
+            await asyncio.sleep(1)
         gen_result = generate_section(block_type, patient_data, [])
         block = ReportBlock(
             id=str(uuid.uuid4()),
@@ -290,4 +291,88 @@ async def generate_report(
                f"report {report_id} with {len(sections)} sections")
     return report_id
 
-# Rate limit spacing between LLM calls
+
+def generate_report_sync(
+    tenant_id: str,
+    patient_id: str,
+    db_session,
+    trigger_node: str = "report_generation",
+) -> Optional[str]:
+    """Sync version for Celery workers — same logic as async generate_report."""
+    from sqlalchemy import select
+    from models.models import (
+        Patient, LabResult, Prescription, Claim, RiskFlag, Report, ReportBlock
+    )
+    import uuid
+
+    emit_event(tenant_id, patient_id, trigger_node, "started", "autonomous report generation")
+
+    patient = db_session.execute(
+        select(Patient).where(Patient.id == patient_id, Patient.tenant_id == tenant_id)
+    ).scalar_one_or_none()
+    if not patient:
+        emit_event(tenant_id, patient_id, trigger_node, "failed", "patient not found")
+        return None
+
+    labs = db_session.execute(
+        select(LabResult).where(LabResult.tenant_id == tenant_id, LabResult.patient_id == patient_id)
+    ).scalars().all()
+
+    rxs = db_session.execute(
+        select(Prescription).where(Prescription.tenant_id == tenant_id, Prescription.patient_id == patient_id)
+    ).scalars().all()
+
+    claims = db_session.execute(
+        select(Claim).where(Claim.tenant_id == tenant_id, Claim.patient_id == patient_id)
+    ).scalars().all()
+
+    flags = db_session.execute(
+        select(RiskFlag).where(
+            RiskFlag.tenant_id == tenant_id, RiskFlag.patient_id == patient_id, RiskFlag.status == "open",
+        )
+    ).scalars().all()
+
+    lab_test_names = list(set(l.test_name for l in labs))
+    sections = plan_report_sections(len(labs) > 0, len(rxs) > 0, len(claims) > 0, len(flags) > 0, lab_test_names)
+
+    patient_data = {
+        "name": patient.name,
+        "dob": str(patient.dob) if patient.dob else "N/A",
+        "id": patient.id,
+        "labs": [{"test_name": l.test_name, "value": l.value, "unit": l.unit,
+                   "reference_range": l.reference_range, "flagged_abnormal": l.flagged_abnormal,
+                   "test_date": str(l.test_date)} for l in labs],
+        "prescriptions": [{"drug_name": r.drug_name, "dosage": r.dosage, "frequency": r.frequency,
+                           "prescribed_date": str(r.prescribed_date), "prescribing_doctor": r.prescribing_doctor}
+                          for r in rxs],
+        "claims": [{"procedure_code": c.procedure_code, "claim_amount": c.claim_amount,
+                     "claim_status": c.claim_status, "claim_date": str(c.claim_date)} for c in claims],
+        "risk_flags": [{"flag_type": f.flag_type, "severity": f.severity, "description": f.description}
+                       for f in flags],
+    }
+
+    report_id = str(uuid.uuid4())
+    report = Report(
+        id=report_id, tenant_id=tenant_id, patient_id=patient_id,
+        status="draft", generated_at=datetime.utcnow(),
+    )
+    db_session.add(report)
+    db_session.flush()
+
+    for idx, section in enumerate(sections):
+        block_type = section["block_type"]
+        if idx > 0:
+            time.sleep(1)
+        gen_result = generate_section(block_type, patient_data, [])
+        block = ReportBlock(
+            id=str(uuid.uuid4()), tenant_id=tenant_id, report_id=report_id,
+            block_type=block_type, order_index=idx,
+            content=gen_result.get("content", ""), ai_generated=True, edited_by_user=False,
+            source_record_ids=gen_result.get("source_record_ids", []),
+        )
+        db_session.add(block)
+
+    db_session.commit()
+    emit_event(tenant_id, patient_id, trigger_node, "completed",
+               f"report {report_id} with {len(sections)} sections")
+    return report_id

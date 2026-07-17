@@ -583,10 +583,9 @@ async def get_summary(tenant_id: str, patient_id: str, db: AsyncSession = Depend
 async def generate_report_manual(
     tenant_id: str, patient_id: str, db: AsyncSession = Depends(get_db),
 ):
-    report_id = await generate_report(tenant_id, patient_id, db)
-    if not report_id:
-        raise HTTPException(500, "Failed to generate report")
-    return {"report_id": report_id, "status": "draft"}
+    from workers.tasks import generate_report_task
+    generate_report_task.delay(tenant_id, patient_id)
+    return {"status": "generating", "message": "Report generation started in background"}
 
 
 @app.get("/api/tenants/{tenant_id}/reports/{report_id}")
@@ -602,6 +601,44 @@ async def get_report(tenant_id: str, report_id: str, db: AsyncSession = Depends(
         select(ReportBlock).where(
             ReportBlock.report_id == report_id,
             ReportBlock.tenant_id == tenant_id,
+        ).order_by(ReportBlock.order_index)
+    )
+    blocks = blocks_result.scalars().all()
+
+    return {
+        "id": report.id,
+        "patient_id": report.patient_id,
+        "status": report.status,
+        "generated_at": str(report.generated_at),
+        "last_edited_at": str(report.last_edited_at) if report.last_edited_at else None,
+        "blocks": [
+            {
+                "id": b.id,
+                "block_type": b.block_type,
+                "order_index": b.order_index,
+                "content": b.content,
+                "ai_generated": b.ai_generated,
+                "edited_by_user": b.edited_by_user,
+            }
+            for b in blocks
+        ],
+    }
+
+
+@app.get("/api/tenants/{tenant_id}/patients/{patient_id}/reports/latest")
+async def get_latest_report(tenant_id: str, patient_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Report).where(
+            Report.tenant_id == tenant_id, Report.patient_id == patient_id,
+        ).order_by(Report.generated_at.desc()).limit(1)
+    )
+    report = result.scalar_one_or_none()
+    if not report:
+        return None
+
+    blocks_result = await db.execute(
+        select(ReportBlock).where(
+            ReportBlock.report_id == report.id, ReportBlock.tenant_id == tenant_id,
         ).order_by(ReportBlock.order_index)
     )
     blocks = blocks_result.scalars().all()
@@ -762,6 +799,66 @@ def _pdf_safe(text: str) -> str:
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
+class ClinicalReportPDF(FPDF):
+    """Custom PDF with branded header/footer."""
+
+    def __init__(self, patient_name: str = "", report_date: str = ""):
+        super().__init__()
+        self.patient_name = patient_name
+        self.report_date = report_date
+
+    def header(self):
+        if self.page_no() == 1:
+            return
+        self.set_font("Helvetica", "B", 9)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 8, _pdf_safe(f"MedDocs AI  |  {self.patient_name}  |  {self.report_date}"),
+                  new_x="LMARGIN", new_y="NEXT", align="L")
+        self.set_draw_color(0, 102, 204)
+        self.set_line_width(0.5)
+        self.line(10, self.get_y(), 200, self.get_y())
+        self.ln(4)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 7)
+        self.set_text_color(150, 150, 150)
+        self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
+
+    def section_title(self, title: str):
+        self.ln(4)
+        self.set_fill_color(0, 102, 204)
+        self.set_text_color(255, 255, 255)
+        self.set_font("Helvetica", "B", 11)
+        self.cell(0, 8, f"  {_pdf_safe(title)}", new_x="LMARGIN", new_y="NEXT", fill=True)
+        self.ln(3)
+        self.set_text_color(0, 0, 0)
+
+    def sub_heading(self, text: str):
+        self.set_font("Helvetica", "B", 9)
+        self.set_text_color(60, 60, 60)
+        self.cell(0, 6, _pdf_safe(text), new_x="LMARGIN", new_y="NEXT")
+        self.set_text_color(0, 0, 0)
+
+    def table_header(self, cols: list, widths: list):
+        self.set_font("Helvetica", "B", 8)
+        self.set_fill_color(230, 240, 250)
+        self.set_text_color(40, 40, 40)
+        for i, col in enumerate(cols):
+            self.cell(widths[i], 7, _pdf_safe(col), border=1, fill=True, align="C")
+        self.ln()
+        self.set_text_color(0, 0, 0)
+
+    def table_row(self, cells: list, widths: list, aligns: list = None, fill: bool = False):
+        self.set_font("Helvetica", "", 8)
+        if fill:
+            self.set_fill_color(248, 250, 252)
+        for i, cell in enumerate(cells):
+            a = (aligns[i] if aligns else "L")
+            self.cell(widths[i], 6, _pdf_safe(str(cell)), border=1, fill=fill, align=a)
+        self.ln()
+
+
 @app.get("/api/tenants/{tenant_id}/reports/{report_id}/pdf")
 async def download_report_pdf(tenant_id: str, report_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -776,65 +873,262 @@ async def download_report_pdf(tenant_id: str, report_id: str, db: AsyncSession =
     )
     patient = patient_result.scalar_one_or_none()
 
-    blocks_result = await db.execute(
+    labs = (await db.execute(
+        select(LabResult).where(LabResult.tenant_id == tenant_id, LabResult.patient_id == report.patient_id)
+    )).scalars().all()
+
+    rxs = (await db.execute(
+        select(Prescription).where(Prescription.tenant_id == tenant_id, Prescription.patient_id == report.patient_id)
+    )).scalars().all()
+
+    flags = (await db.execute(
+        select(RiskFlag).where(RiskFlag.tenant_id == tenant_id, RiskFlag.patient_id == report.patient_id)
+    )).scalars().all()
+
+    blocks = (await db.execute(
         select(ReportBlock).where(
-            ReportBlock.report_id == report_id,
-            ReportBlock.tenant_id == tenant_id,
+            ReportBlock.report_id == report_id, ReportBlock.tenant_id == tenant_id,
         ).order_by(ReportBlock.order_index)
-    )
-    blocks = blocks_result.scalars().all()
+    )).scalars().all()
 
-    pdf = FPDF()
+    doc = (await db.execute(
+        select(Document).where(Document.tenant_id == tenant_id, Document.patient_id == report.patient_id)
+    )).scalars().all()
+
+    gen_date = report.generated_at.strftime("%B %d, %Y") if report.generated_at else "N/A"
+    patient_name = patient.name if patient else "Unknown Patient"
+    patient_dob = patient.dob.strftime("%B %d, %Y") if patient and patient.dob else "N/A"
+
+    pdf = ClinicalReportPDF(patient_name=patient_name, report_date=gen_date)
+    pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.add_page()
 
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.cell(0, 12, "MedDocs AI Clinical Report", new_x="LMARGIN", new_y="NEXT", align="C")
+    # ── Cover Page ──────────────────────────────────────────────
+    pdf.add_page()
+    pdf.ln(30)
+    pdf.set_font("Helvetica", "B", 28)
+    pdf.set_text_color(0, 102, 204)
+    pdf.cell(0, 14, "MedDocs AI", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_font("Helvetica", "", 14)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(0, 10, "Clinical Patient Report", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(8)
+
+    pdf.set_draw_color(0, 102, 204)
+    pdf.set_line_width(0.8)
+    pdf.line(60, pdf.get_y(), 150, pdf.get_y())
+    pdf.ln(12)
+
+    info_w = 100
+    lx = (210 - info_w) // 2
+    pdf.set_x(lx)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(info_w, 8, _pdf_safe(f"Patient: {patient_name}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_x(lx)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(info_w, 7, _pdf_safe(f"Date of Birth: {patient_dob}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_x(lx)
+    pdf.cell(info_w, 7, _pdf_safe(f"Patient ID: {report.patient_id}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_x(lx)
+    pdf.cell(info_w, 7, _pdf_safe(f"Report Date: {gen_date}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_x(lx)
+    pdf.cell(info_w, 7, _pdf_safe(f"Report ID: {report_id}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_x(lx)
+    status_label = report.status.upper()
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(0, 150, 0) if report.status == "finalized" else pdf.set_text_color(200, 150, 0)
+    pdf.cell(info_w, 7, _pdf_safe(f"Status: {status_label}"), new_x="LMARGIN", new_y="NEXT", align="C")
+
+    pdf.ln(15)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(120, 120, 120)
+    pdf.cell(0, 6, _pdf_safe(f"Documents on file: {len(doc)}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 6, _pdf_safe(f"Lab results: {len(labs)}  |  Medications: {len(rxs)}  |  Risk flags: {len([f for f in flags if f.status == 'open'])}"),
+             new_x="LMARGIN", new_y="NEXT", align="C")
+
+    # ── Table of Contents ───────────────────────────────────────
+    pdf.ln(20)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(0, 102, 204)
+    pdf.cell(0, 8, "Table of Contents", new_x="LMARGIN", new_y="NEXT", align="L")
+    pdf.set_draw_color(0, 102, 204)
+    pdf.set_line_width(0.3)
+    pdf.line(10, pdf.get_y(), 80, pdf.get_y())
     pdf.ln(4)
 
+    toc_items = []
+    if labs:
+        toc_items.append("1.  Laboratory Results")
+    if rxs:
+        toc_items.append(f"{len(toc_items)+1}.  Medication Summary")
+    if flags:
+        toc_items.append(f"{len(toc_items)+1}.  Risk Flags & Clinical Alerts")
+    for b in blocks:
+        if b.block_type not in ("patient_overview", "lab_summary", "medication_summary", "risk_flags"):
+            toc_items.append(f"{len(toc_items)+1}.  {b.block_type.replace('_', ' ').title()}")
+    toc_items.append(f"{len(toc_items)+1}.  Disclaimer")
+
     pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(100, 100, 100)
-    if patient:
-        pdf.cell(0, 6, _pdf_safe(f"Patient: {patient.name}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, _pdf_safe(f"Report ID: {report_id}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, _pdf_safe(f"Generated: {report.generated_at}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, _pdf_safe(f"Status: {report.status}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(6)
+    pdf.set_text_color(40, 40, 40)
+    for item in toc_items:
+        pdf.cell(0, 7, _pdf_safe(item), new_x="LMARGIN", new_y="NEXT")
 
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(6)
+    # ── Lab Results Table ───────────────────────────────────────
+    if labs:
+        pdf.add_page()
+        pdf.section_title("Laboratory Results")
 
+        lab_widths = [52, 22, 16, 18, 28, 16, 22]
+        lab_cols = ["Test Name", "Value", "Unit", "Flag", "Reference Range", "Date", "Status"]
+        pdf.table_header(lab_cols, lab_widths)
+
+        for i, lab in enumerate(labs):
+            flagged = "HIGH" if lab.flagged_abnormal and lab.value else ("LOW" if lab.flagged_abnormal else "")
+            flag_color = (200, 40, 40) if flagged == "HIGH" else ((40, 40, 200) if flagged == "LOW" else (0, 0, 0))
+            test_date = lab.test_date.strftime("%Y-%m-%d") if lab.test_date else "N/A"
+            status = "Abnormal" if lab.flagged_abnormal else "Normal"
+
+            fill = (i % 2 == 0)
+            aligns = ["L", "R", "C", "C", "C", "C", "C"]
+            cells = [
+                str(lab.test_name or ""),
+                str(lab.value) if lab.value is not None else "",
+                str(lab.unit or ""),
+                flagged or "-",
+                str(lab.reference_range or ""),
+                test_date,
+                status,
+            ]
+            if flagged:
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(*flag_color)
+                pdf.table_row(cells, lab_widths, aligns, fill)
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.table_row(cells, lab_widths, aligns, fill)
+
+        pdf.ln(3)
+        abnormal_count = sum(1 for l in labs if l.flagged_abnormal)
+        if abnormal_count > 0:
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(200, 40, 40)
+            pdf.cell(0, 6, _pdf_safe(f"{abnormal_count} abnormal value(s) detected -- clinical review recommended."),
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+
+    # ── Medications Table ───────────────────────────────────────
+    if rxs:
+        if pdf.get_y() > 200:
+            pdf.add_page()
+        pdf.section_title("Medication Summary")
+
+        rx_widths = [40, 25, 35, 30, 30, 20]
+        rx_cols = ["Drug Name", "Dosage", "Frequency", "Start Date", "Doctor", "Status"]
+        pdf.table_header(rx_cols, rx_widths)
+
+        for i, rx in enumerate(rxs):
+            start = ""
+            if rx.prescribed_date:
+                start = rx.prescribed_date.strftime("%Y-%m-%d")
+            cells = [
+                str(rx.drug_name or ""),
+                str(rx.dosage or ""),
+                str(rx.frequency or ""),
+                start or "N/A",
+                str(rx.prescribing_doctor or ""),
+                "Active",
+            ]
+            pdf.table_row(cells, rx_widths, ["L", "C", "L", "C", "L", "C"], fill=(i % 2 == 0))
+
+    # ── Risk Flags Section ──────────────────────────────────────
+    open_flags = [f for f in flags if f.status == "open"]
+    if open_flags:
+        if pdf.get_y() > 200:
+            pdf.add_page()
+        pdf.section_title("Risk Flags & Clinical Alerts")
+
+        severity_colors = {
+            "high": (200, 40, 40),
+            "medium": (220, 150, 0),
+            "low": (60, 150, 60),
+        }
+
+        for flag in open_flags:
+            color = severity_colors.get(flag.severity, (80, 80, 80))
+
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(*color)
+            sev_label = flag.severity.upper() if flag.severity else "UNKNOWN"
+            pdf.cell(30, 6, _pdf_safe(f"[{sev_label}]"), new_x="END")
+            pdf.set_text_color(0, 0, 0)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 6, _pdf_safe(flag.flag_type.replace("_", " ").title()), new_x="LMARGIN", new_y="NEXT")
+
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(60, 60, 60)
+            pdf.multi_cell(0, 5, _pdf_safe(flag.description or ""))
+            pdf.ln(2)
+
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_text_color(120, 120, 120)
+        pdf.cell(0, 5, _pdf_safe("All flags are advisory -- review by a clinician is required."),
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+
+    # ── Additional Report Blocks (trends, clinical notes, etc.) ─
     for block in blocks:
+        if block.block_type in ("patient_overview", "lab_summary", "medication_summary", "risk_flags"):
+            continue
+        if pdf.get_y() > 230:
+            pdf.add_page()
         title = block.block_type.replace("_", " ").title()
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _pdf_safe(title), new_x="LMARGIN", new_y="NEXT")
-
+        pdf.section_title(title)
         if block.ai_generated and not block.edited_by_user:
             pdf.set_font("Helvetica", "I", 8)
             pdf.set_text_color(59, 130, 246)
             pdf.cell(0, 5, "[AI Generated]", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
         elif block.edited_by_user:
             pdf.set_font("Helvetica", "I", 8)
             pdf.set_text_color(34, 197, 94)
             pdf.cell(0, 5, "[Edited by User]", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 5, _pdf_safe(block.content))
+        pdf.ln(3)
 
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 6, _pdf_safe(block.content))
-        pdf.ln(4)
+    # ── Disclaimer ──────────────────────────────────────────────
+    pdf.add_page()
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(0, 102, 204)
+    pdf.cell(0, 8, "Disclaimer", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(80, 80, 80)
+    disclaimer = (
+        "This report was generated by MedDocs AI for informational purposes only. "
+        "It is not a substitute for professional medical advice, diagnosis, or treatment. "
+        "All flagged values and risk alerts are advisory and require review by a qualified "
+        "healthcare provider. Do not make clinical decisions based solely on this report.\n\n"
+        "Data sources: laboratory results, prescriptions, claims, and clinical notes on file "
+        f"as of {gen_date}. Report ID: {report_id}."
+    )
+    pdf.multi_cell(0, 5, _pdf_safe(disclaimer), align="C")
 
+    pdf.ln(8)
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(150, 150, 150)
-    pdf.cell(0, 6, _pdf_safe("Generated by MedDocs AI - For informational purposes only. Consult a healthcare provider."),
-             new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 5, _pdf_safe("Generated by MedDocs AI"), new_x="LMARGIN", new_y="NEXT", align="C")
 
     pdf_buffer = io.BytesIO()
     pdf_bytes = pdf.output()
     pdf_buffer.write(pdf_bytes)
     pdf_buffer.seek(0)
 
-    filename = f"report_{report_id[:8]}.pdf"
+    filename = f"report_{patient_name.replace(' ', '_')}_{report_id[:8]}.pdf"
     return StreamingResponse(
         pdf_buffer,
         media_type="application/pdf",

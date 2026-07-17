@@ -97,6 +97,8 @@ export const api = {
     fetchAPI(`/api/tenants/${tenantId}/patients/${patientId}/reports/generate`, {
       method: "POST",
     }),
+  getLatestReport: (tenantId: string, patientId: string) =>
+    fetchAPI(`/api/tenants/${tenantId}/patients/${patientId}/reports/latest`),
   getReport: (tenantId: string, reportId: string) =>
     fetchAPI(`/api/tenants/${tenantId}/reports/${reportId}`),
   updateReportBlock: (tenantId: string, reportId: string, blockId: string, content: string) =>

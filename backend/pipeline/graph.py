@@ -11,6 +11,7 @@ from pipeline.agents.extractors import (
     extract_lab_data_agent,
     extract_prescription_agent,
     extract_claims_csv_agent,
+    extract_discharge_summary_agent,
 )
 from pipeline.agents.verifier import verifier_agent
 from core.events import emit_event
@@ -54,6 +55,11 @@ def extract_claims_node(state: GraphState) -> GraphState:
     return state
 
 
+def extract_discharge_summary_node(state: GraphState) -> GraphState:
+    extract_discharge_summary_agent(state)
+    return state
+
+
 def verifier_node(state: GraphState) -> GraphState:
     verifier_agent(state)
     return state
@@ -62,9 +68,11 @@ def verifier_node(state: GraphState) -> GraphState:
 def _mark_needs_manual_review(state: GraphState) -> GraphState:
     start = time.time()
     _emit(state, "manual_review", "started")
+    if not state.manual_review_reason:
+        state.manual_review_reason = f"no extractor defined for doc_type: {state.doc_type}"
     state.doc_type = "needs_manual_review"
-    _trace(state, "manual_review", start, "routed to manual review")
-    _emit(state, "manual_review", "completed", "; ".join(state.validation_errors[:3]))
+    _trace(state, "manual_review", start, state.manual_review_reason)
+    _emit(state, "manual_review", "completed", state.manual_review_reason)
     return state
 
 
@@ -75,6 +83,8 @@ def route_after_planner(state: GraphState) -> str:
         return "extract_prescription"
     elif state.doc_type == "insurance_claim":
         return "extract_claims_csv"
+    elif state.doc_type == "discharge_summary":
+        return "extract_discharge_summary"
     else:
         return "manual_review"
 
@@ -132,6 +142,7 @@ def build_graph() -> StateGraph:
     graph.add_node("extract_lab_data", extract_lab_node)
     graph.add_node("extract_prescription", extract_prescription_node)
     graph.add_node("extract_claims_csv", extract_claims_node)
+    graph.add_node("extract_discharge_summary", extract_discharge_summary_node)
     graph.add_node("manual_review", _mark_needs_manual_review)
     graph.add_node("verifier", verifier_node)
     graph.add_node("persist", persist_node)
@@ -147,6 +158,7 @@ def build_graph() -> StateGraph:
             "extract_lab_data": "extract_lab_data",
             "extract_prescription": "extract_prescription",
             "extract_claims_csv": "extract_claims_csv",
+            "extract_discharge_summary": "extract_discharge_summary",
             "manual_review": "manual_review",
         },
     )
@@ -154,6 +166,7 @@ def build_graph() -> StateGraph:
     graph.add_edge("extract_lab_data", "verifier")
     graph.add_edge("extract_prescription", "verifier")
     graph.add_edge("extract_claims_csv", "verifier")
+    graph.add_edge("extract_discharge_summary", "verifier")
 
     graph.add_conditional_edges(
         "verifier",
@@ -163,6 +176,7 @@ def build_graph() -> StateGraph:
             "extract_lab_data": "extract_lab_data",
             "extract_prescription": "extract_prescription",
             "extract_claims_csv": "extract_claims_csv",
+            "extract_discharge_summary": "extract_discharge_summary",
             "manual_review": "manual_review",
         },
     )

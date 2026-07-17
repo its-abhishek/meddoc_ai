@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 
 _client: Optional[Groq] = None
 
-# Rate limiter: max 1 concurrent LLM call, min 3s between calls
+# Rate limiter: max 1 concurrent LLM call, min 5s between calls
 _llm_lock = threading.Lock()
 _last_call_time = 0.0
-_MIN_DELAY = 3.0
+_MIN_DELAY = 5.0
 
 
 def get_client() -> Groq:
@@ -42,8 +42,9 @@ def call_llm(
     temperature: float = 0.1,
     max_tokens: int = 4096,
     response_format: Optional[dict] = None,
+    rate_limit: bool = True,
 ) -> str:
-    """Call Groq with retry/backoff on 429."""
+    """Call Groq. Use rate_limit=False to skip rate limiting and retries (e.g. for queries)."""
     settings = get_settings()
     model = model or settings.GROQ_REASONING_MODEL
     client = get_client()
@@ -62,6 +63,10 @@ def call_llm(
     if response_format:
         kwargs["response_format"] = response_format
 
+    if not rate_limit:
+        response = client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content
+
     max_retries = 7
     for attempt in range(max_retries):
         _wait_for_rate_limit()
@@ -70,7 +75,10 @@ def call_llm(
             return response.choices[0].message.content
         except APIStatusError as e:
             if e.status_code == 429:
-                wait = (2 ** attempt) + (time.time() % 3)
+                retry_after = 0
+                if hasattr(e, "response") and hasattr(e.response, "headers"):
+                    retry_after = float(e.response.headers.get("retry-after", 0))
+                wait = min(retry_after or (min(2 ** (attempt + 2), 30) + (time.time() % 2)), 30)
                 logger.warning(f"Rate limited, retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
                 time.sleep(wait)
             else:
