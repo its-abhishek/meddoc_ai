@@ -150,14 +150,25 @@ def _extract_json_from_text(text: str) -> dict:
     return {}
 
 
+SECTION_DATA_KEYS = {
+    "patient_overview": ["name", "dob", "id"],
+    "lab_summary": ["labs"],
+    "medication_summary": ["prescriptions"],
+    "risk_flags": ["risk_flags"],
+    "trends": ["labs"],
+}
+
+
 def generate_section(
     block_type: str,
     patient_data: Dict[str, Any],
     source_record_ids: List[str],
 ) -> Dict[str, Any]:
-    """Generate content for a single report block."""
+    """Generate content for a single report block — sends only the relevant data subset."""
     system_prompt = SECTION_GENERATORS.get(block_type, SECTION_GENERATORS["patient_overview"])
-    prompt = f"Generate this section using the following patient data:\n\n{json.dumps(patient_data, indent=2)}"
+    keys = SECTION_DATA_KEYS.get(block_type)
+    section_data = {k: patient_data[k] for k in keys if k in patient_data} if keys else patient_data
+    prompt = f"Generate this section using the following patient data:\n\n{json.dumps(section_data, indent=2)}"
 
     try:
         result = call_llm_structured(prompt=prompt, system_prompt=system_prompt)

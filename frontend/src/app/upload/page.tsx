@@ -27,7 +27,10 @@ export default function UploadPage() {
   const [results, setResults] = useState<UploadResult[]>([]);
   const [activePipeline, setActivePipeline] = useState<string | null>(null);
   const [pipelineEvents, setPipelineEvents] = useState<PipelineEvent[]>([]);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [retryCountdown, setRetryCountdown] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
   const MONITOR_API = "http://localhost:8001";
   const nodeSteps = ["planner", "extract_lab_data", "extract_prescription", "extract_claims_csv",
@@ -35,7 +38,7 @@ export default function UploadPage() {
 
   useEffect(() => {
     loadPatients();
-    return () => { closeSSE(); };
+    return () => { closeSSE(); if (countdownRef.current) clearInterval(countdownRef.current); };
   }, []);
 
   async function loadPatients() {
@@ -62,9 +65,19 @@ export default function UploadPage() {
         };
         setPipelineEvents((prev) => [...prev, newEvent]);
 
+        const detail = (event.detail || "").toLowerCase();
+        if (detail.includes("rate limit") || detail.includes("429") || detail.includes("too many requests")) {
+          setRateLimited(true);
+          startCountdown(60);
+        }
+
         // Close on terminal
         if (event.status === "completed" || event.status === "failed") {
           if (event.node === "pipeline") {
+            if (event.status === "failed" && detail.includes("rate limit")) {
+              setRateLimited(true);
+              startCountdown(60);
+            }
             setTimeout(closeSSE, 1000);
           }
         }
@@ -80,6 +93,31 @@ export default function UploadPage() {
       eventSourceRef.current = null;
     }
     setActivePipeline(null);
+  }
+
+  function startCountdown(seconds: number) {
+    setRetryCountdown(seconds);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
+      setRetryCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(countdownRef.current!);
+          setRateLimited(false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  async function deleteDoc(docId: string) {
+    if (!confirm("Delete this document and all extracted data?")) return;
+    try {
+      await api.deleteDocument(getTenantId(), docId);
+      setResults((prev) => prev.filter((r) => r.docId !== docId));
+    } catch (e: any) {
+      alert("Delete failed: " + e.message);
+    }
   }
 
   const onDrop = useCallback(
@@ -157,6 +195,29 @@ export default function UploadPage() {
 
       {uploading && <div className="mt-4 text-center text-primary-600">Uploading...</div>}
 
+      {rateLimited && (
+        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center gap-2">
+            <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-red-800">Rate limit exceeded — Groq API (429)</p>
+              <p className="text-xs text-red-600">
+                {retryCountdown > 0
+                  ? `Retry in ${retryCountdown}s — re-upload after countdown`
+                  : "Ready to retry — upload again"}
+              </p>
+            </div>
+            {retryCountdown > 0 && (
+              <div className="ml-auto w-8 h-8 rounded-full border-4 border-red-200 border-t-red-500 animate-spin flex items-center justify-center">
+                <span className="text-[10px] font-bold text-red-600">{retryCountdown}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Live Pipeline View */}
       {activePipeline && pipelineEvents.length > 0 && (
         <div className="mt-6 bg-white rounded-xl border p-4">
@@ -204,13 +265,19 @@ export default function UploadPage() {
         <div className="mt-6 space-y-2">
           <h3 className="font-medium text-gray-900">Upload Results</h3>
           {results.map((r, i) => (
-            <div key={i} className="flex justify-between items-center bg-white rounded-lg border p-3">
+              <div key={i} className="flex justify-between items-center bg-white rounded-lg border p-3">
               <span className="text-sm text-gray-700">{r.file}</span>
               <div className="flex items-center gap-2">
                 {r.docId && (
                   <button onClick={() => openSSE(r.docId!)}
                     className="text-xs text-primary-600 hover:text-primary-800 font-medium">
                     Watch Pipeline
+                  </button>
+                )}
+                {r.docId && (
+                  <button onClick={() => deleteDoc(r.docId!)}
+                    className="text-xs text-red-500 hover:text-red-700 font-medium">
+                    Delete
                   </button>
                 )}
                 <span className={`text-sm font-medium ${

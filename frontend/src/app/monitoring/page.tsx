@@ -8,6 +8,7 @@ function getTenantId(): string {
 
 interface DocSummary {
   document_id: string;
+  filename?: string;
   current_node: string;
   current_status: string;
   detail?: string;
@@ -35,12 +36,15 @@ export default function MonitoringPage() {
   const [allEvents, setAllEvents] = useState<StatusEvent[]>([]);
   const [docIdInput, setDocIdInput] = useState("");
   const [pipelineDone, setPipelineDone] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [retryCountdown, setRetryCountdown] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 5000);
-    return () => { clearInterval(interval); closeSSE(); };
+    return () => { clearInterval(interval); closeSSE(); if (countdownRef.current) clearInterval(countdownRef.current); };
   }, []);
 
   async function loadData() {
@@ -98,8 +102,19 @@ export default function MonitoringPage() {
           if (isDupe) return prev;
           return [...prev, newEvent];
         });
+
+        const detail = (event.detail || "").toLowerCase();
+        if (detail.includes("rate limit") || detail.includes("429") || detail.includes("too many requests")) {
+          setRateLimited(true);
+          startCountdown(60);
+        }
+
         if (event.node === "pipeline" && (event.status === "completed" || event.status === "failed")) {
           setPipelineDone(true);
+          if (event.status === "failed" && detail.includes("rate limit")) {
+            setRateLimited(true);
+            startCountdown(60);
+          }
         }
       } catch {}
     });
@@ -114,9 +129,41 @@ export default function MonitoringPage() {
     }
   }
 
+  function startCountdown(seconds: number) {
+    setRetryCountdown(seconds);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
+      setRetryCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(countdownRef.current!);
+          setRateLimited(false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
   function lookupDoc() {
     if (docIdInput.trim()) {
       openMonitor(docIdInput.trim());
+    }
+  }
+
+  async function deleteDoc(docId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!confirm("Delete this document and all extracted data?")) return;
+    try {
+      await api.deleteDocument(getTenantId(), docId);
+      setActiveDocs((prev) => prev.filter((d) => d.document_id !== docId));
+      setAllDocs((prev) => prev.filter((d) => d.document_id !== docId));
+      if (selectedDoc === docId) {
+        closeSSE();
+        setSelectedDoc(null);
+        setAllEvents([]);
+      }
+    } catch (err: any) {
+      alert("Delete failed: " + err.message);
     }
   }
 
@@ -172,9 +219,13 @@ export default function MonitoringPage() {
                     }`}>
                     <div className="flex justify-between items-center">
                       <span className="font-mono text-xs text-gray-500">{d.document_id.slice(0, 8)}...</span>
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(d.current_status)}`}>
-                        {d.current_node}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(d.current_status)}`}>
+                          {d.current_node}
+                        </span>
+                        <span onClick={(e) => deleteDoc(d.document_id, e)}
+                          className="text-xs text-red-500 hover:text-red-700 font-medium cursor-pointer">Delete</span>
+                      </div>
                     </div>
                     <p className="text-xs text-gray-400 mt-1">Last: {new Date(d.last_event).toLocaleTimeString()}</p>
                   </button>
@@ -196,12 +247,16 @@ export default function MonitoringPage() {
                       selectedDoc === d.document_id ? "border-primary-500 bg-primary-50" : "hover:bg-gray-50"
                     }`}>
                     <div className="flex justify-between items-center">
-                      <span className="font-mono text-xs text-gray-500">{d.document_id.slice(0, 8)}...</span>
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(d.current_status)}`}>
-                        {d.current_status}
-                      </span>
+                      <span className="font-medium text-gray-700 text-xs truncate max-w-[140px]">{d.filename || d.document_id.slice(0, 8)}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(d.current_status)}`}>
+                          {d.current_status}
+                        </span>
+                        <span onClick={(e) => deleteDoc(d.document_id, e)}
+                          className="text-xs text-red-500 hover:text-red-700 font-medium cursor-pointer">Delete</span>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">Step: {d.current_node} | {new Date(d.last_event).toLocaleTimeString()}</p>
+                    <p className="text-xs text-gray-400 mt-1">Step: {d.current_node} | {d.last_event ? new Date(d.last_event).toLocaleTimeString() : "pending"}</p>
                   </button>
                 ))}
               </div>
@@ -214,6 +269,29 @@ export default function MonitoringPage() {
           <h3 className="text-lg font-semibold mb-3">
             {selectedDoc ? `Events: ${selectedDoc.slice(0, 8)}...` : "Event Stream"}
           </h3>
+
+          {rateLimited && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-medium text-red-800">Rate limit exceeded — Groq API returned 429</p>
+                  <p className="text-xs text-red-600 mt-0.5">
+                    {retryCountdown > 0
+                      ? `Retry available in ${retryCountdown}s — pipeline will resume automatically`
+                      : "Retry available now — re-upload to try again"}
+                  </p>
+                </div>
+                {retryCountdown > 0 && (
+                  <div className="ml-auto w-10 h-10 rounded-full border-4 border-red-200 border-t-red-500 animate-spin flex items-center justify-center">
+                    <span className="text-xs font-bold text-red-600">{retryCountdown}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {selectedDoc && (
             <div className="mb-4">

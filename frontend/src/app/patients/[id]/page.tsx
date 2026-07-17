@@ -68,6 +68,8 @@ export default function PatientDetailPage() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
   const [pdfDownloading, setPdfDownloading] = useState(false);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
 
   useEffect(() => { loadData(); }, [patientId]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
@@ -85,6 +87,25 @@ export default function PatientDetailPage() {
       setPatient(p); setLabs(l); setPrescriptions(r); setClaims(c);
       setRiskFlags(f); setNotifications(n);
     } catch (e) { console.error("Failed to load patient data:", e); }
+  }
+
+  async function loadDocuments() {
+    setDocsLoading(true);
+    try {
+      const data = await api.listDocuments(getTenantId(), patientId);
+      setDocuments(data);
+    } catch (e) { console.error("Failed to load documents:", e); }
+    setDocsLoading(false);
+  }
+
+  async function deleteDoc(docId: string) {
+    if (!confirm("Delete this document and all extracted data?")) return;
+    try {
+      await api.deleteDocument(getTenantId(), docId);
+      setDocuments((prev) => prev.filter((d: any) => d.id !== docId));
+    } catch (e: any) {
+      alert("Delete failed: " + e.message);
+    }
   }
 
   async function loadSummary() {
@@ -206,6 +227,7 @@ export default function PatientDetailPage() {
   if (!patient) return <div className="text-center py-12 text-gray-500">Loading patient...</div>;
 
   const tabs = [
+    { key: "docs", label: `Documents (${documents.length})` },
     { key: "labs", label: `Lab Results (${labs.length})` },
     { key: "rx", label: `Prescriptions (${prescriptions.length})` },
     { key: "claims", label: `Claims (${claims.length})` },
@@ -232,6 +254,7 @@ export default function PatientDetailPage() {
             onClick={() => {
               setActiveTab(t.key);
               if (t.key === "summary" && !summary) loadSummary();
+              if (t.key === "docs" && documents.length === 0) loadDocuments();
             }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
               activeTab === t.key
@@ -243,6 +266,51 @@ export default function PatientDetailPage() {
           </button>
         ))}
       </div>
+
+      {/* Documents */}
+      {activeTab === "docs" && (
+        <div className="bg-white rounded-xl border overflow-hidden">
+          {docsLoading ? (
+            <div className="text-center py-8 text-gray-500">Loading documents...</div>
+          ) : documents.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">No documents uploaded yet.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Filename</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Type</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Uploaded</th>
+                  <th className="text-right px-4 py-3 font-medium text-gray-600">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.map((d: any) => (
+                  <tr key={d.id} className="border-b last:border-0">
+                    <td className="px-4 py-3 font-medium">{d.filename}</td>
+                    <td className="px-4 py-3 text-gray-500">{d.doc_type || "-"}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        d.status === "processed" ? "bg-green-100 text-green-700" :
+                        d.status === "failed" ? "bg-red-100 text-red-700" :
+                        "bg-yellow-100 text-yellow-700"
+                      }`}>{d.status}</span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {d.created_at ? new Date(d.created_at).toLocaleDateString() : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button onClick={() => deleteDoc(d.id)}
+                        className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {/* Lab Results */}
       {activeTab === "labs" && (

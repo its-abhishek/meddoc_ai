@@ -54,6 +54,8 @@ export const api = {
   },
   listDocuments: (tenantId: string, patientId: string) =>
     fetchAPI(`/api/tenants/${tenantId}/patients/${patientId}/documents`),
+  deleteDocument: (tenantId: string, documentId: string) =>
+    fetchAPI(`/api/tenants/${tenantId}/documents/${documentId}`, { method: "DELETE" }),
 
   // Structured data
   getLabResults: (tenantId: string, patientId: string) =>

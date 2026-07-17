@@ -226,10 +226,12 @@ async def get_all_documents(tenant_id: str):
                     FROM monitoring_events
                     WHERE tenant_id = :tenant_id
                 )
-                SELECT document_id, node, status, detail, timestamp
-                FROM latest_events
-                WHERE rn = 1
-                ORDER BY timestamp DESC
+                SELECT d.id, d.source_filename, d.upload_status,
+                       le.node, le.status, le.detail, le.timestamp
+                FROM documents d
+                LEFT JOIN latest_events le ON d.id = le.document_id AND le.rn = 1
+                WHERE d.tenant_id = :tenant_id
+                ORDER BY COALESCE(le.timestamp, d.created_at) DESC
                 LIMIT 50
             """),
             {"tenant_id": tenant_id},
@@ -239,10 +241,11 @@ async def get_all_documents(tenant_id: str):
     return [
         {
             "document_id": str(d[0]),
-            "current_node": d[1],
-            "current_status": d[2],
-            "detail": d[3] or "",
-            "last_event": str(d[4]),
+            "filename": d[1],
+            "current_node": d[3] or "queued",
+            "current_status": d[4] or d[2],
+            "detail": d[5] or "",
+            "last_event": str(d[6]) if d[6] else "",
         }
         for d in docs
     ]

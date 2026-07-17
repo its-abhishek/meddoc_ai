@@ -21,7 +21,7 @@ from models.database import get_db, init_db
 from models.models import (
     Tenant, Patient, Document, LabResult, Prescription, Claim,
     DocumentChunk, ManualReviewQueue, AuditLog, RiskFlag,
-    Report, ReportBlock, Notification, User,
+    Report, ReportBlock, Notification, User, ProcessingTrace, MonitoringEvent,
 )
 from workers.tasks import process_document
 from core.embeddings import embed_text
@@ -273,6 +273,30 @@ async def get_document(tenant_id: str, document_id: str, db: AsyncSession = Depe
         "doc_type": doc.doc_type, "status": doc.upload_status,
         "created_at": str(doc.created_at),
     }
+
+
+@app.delete("/api/tenants/{tenant_id}/documents/{document_id}")
+async def delete_document(tenant_id: str, document_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Document).where(Document.id == document_id, Document.tenant_id == tenant_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    for model in [LabResult, Prescription, Claim, DocumentChunk, ProcessingTrace, ManualReviewQueue, MonitoringEvent, Notification]:
+        await db.execute(
+            sqldelete(model).where(model.document_id == document_id, model.tenant_id == tenant_id)
+        )
+
+    if doc.raw_storage_path and os.path.exists(doc.raw_storage_path):
+        os.remove(doc.raw_storage_path)
+
+    await db.delete(doc)
+    await db.flush()
+    _log_audit(tenant_id, document_id, doc.patient_id, "delete_document", db)
+    await db.flush()
+    return {"deleted": document_id}
 
 
 # ── Structured data endpoints ─────────────────────────────────
