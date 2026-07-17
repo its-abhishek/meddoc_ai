@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
 function getTenantId(): string {
@@ -40,6 +40,7 @@ interface TrendData {
 
 export default function PatientDetailPage() {
   const { id: patientId } = useParams<{ id: string }>();
+  const router = useRouter();
   const [patient, setPatient] = useState<any>(null);
   const [labs, setLabs] = useState<LabResult[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -71,7 +72,7 @@ export default function PatientDetailPage() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
 
-  useEffect(() => { loadData(); }, [patientId]);
+  useEffect(() => { loadData(); loadDocuments(); }, [patientId]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
 
   async function loadData() {
@@ -284,7 +285,6 @@ export default function PatientDetailPage() {
             onClick={() => {
               setActiveTab(t.key);
               if (t.key === "summary" && !summary) loadSummary();
-              if (t.key === "docs" && documents.length === 0) loadDocuments();
             }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
               activeTab === t.key
@@ -317,7 +317,8 @@ export default function PatientDetailPage() {
               </thead>
               <tbody>
                 {documents.map((d: any) => (
-                  <tr key={d.id} className="border-b last:border-0">
+                  <tr key={d.id} className="border-b last:border-0 hover:bg-gray-50 cursor-pointer"
+                      onClick={() => router.push(`/patients/${patientId}/documents/${d.id}`)}>
                     <td className="px-4 py-3 font-medium">{d.filename}</td>
                     <td className="px-4 py-3 text-gray-500">{d.doc_type || "-"}</td>
                     <td className="px-4 py-3">
@@ -330,7 +331,7 @@ export default function PatientDetailPage() {
                     <td className="px-4 py-3 text-gray-500">
                       {d.created_at ? new Date(d.created_at).toLocaleDateString() : "-"}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <button onClick={() => deleteDoc(d.id)}
                         className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
                     </td>

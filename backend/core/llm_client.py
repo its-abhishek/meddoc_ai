@@ -67,7 +67,7 @@ def call_llm(
         response = client.chat.completions.create(**kwargs)
         return response.choices[0].message.content
 
-    max_retries = 7
+    max_retries = 3
     for attempt in range(max_retries):
         _wait_for_rate_limit()
         try:
@@ -78,7 +78,7 @@ def call_llm(
                 retry_after = 0
                 if hasattr(e, "response") and hasattr(e.response, "headers"):
                     retry_after = float(e.response.headers.get("retry-after", 0))
-                wait = min(retry_after or (min(2 ** (attempt + 2), 30) + (time.time() % 2)), 30)
+                wait = min(retry_after or (min(2 ** (attempt + 2), 15) + (time.time() % 2)), 15)
                 logger.warning(f"Rate limited, retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
                 time.sleep(wait)
             else:

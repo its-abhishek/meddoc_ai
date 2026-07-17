@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete as sqldelete, text
 from sqlalchemy.orm import joinedload
@@ -268,11 +268,85 @@ async def get_document(tenant_id: str, document_id: str, db: AsyncSession = Depe
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document not found")
+
+    lab_result = await db.execute(
+        select(LabResult).where(LabResult.document_id == document_id, LabResult.tenant_id == tenant_id)
+    )
+    rx_result = await db.execute(
+        select(Prescription).where(Prescription.document_id == document_id, Prescription.tenant_id == tenant_id)
+    )
+    claim_result = await db.execute(
+        select(Claim).where(Claim.document_id == document_id, Claim.tenant_id == tenant_id)
+    )
+    chunk_result = await db.execute(
+        select(DocumentChunk).where(DocumentChunk.document_id == document_id, DocumentChunk.tenant_id == tenant_id)
+    )
+    trace_result = await db.execute(
+        select(ProcessingTrace).where(ProcessingTrace.document_id == document_id, ProcessingTrace.tenant_id == tenant_id)
+    )
+
+    chunks = chunk_result.scalars().all()
+
     return {
         "id": doc.id, "filename": doc.source_filename,
         "doc_type": doc.doc_type, "status": doc.upload_status,
         "created_at": str(doc.created_at),
+        "patient_id": str(doc.patient_id),
+        "clinical_notes": doc.clinical_notes or [],
+        "lab_results": [
+            {"id": l.id, "test_name": l.test_name, "value": l.value, "unit": l.unit,
+             "reference_range": l.reference_range, "flagged_abnormal": l.flagged_abnormal,
+             "test_date": str(l.test_date) if l.test_date else None}
+            for l in lab_result.scalars().all()
+        ],
+        "prescriptions": [
+            {"id": r.id, "drug_name": r.drug_name, "dosage": r.dosage,
+             "frequency": r.frequency, "prescribed_date": str(r.prescribed_date) if r.prescribed_date else None,
+             "prescribing_doctor": r.prescribing_doctor}
+            for r in rx_result.scalars().all()
+        ],
+        "claims": [
+            {"id": c.id, "procedure_code": c.procedure_code, "claim_amount": c.claim_amount,
+             "claim_status": c.claim_status, "claim_date": str(c.claim_date) if c.claim_date else None}
+            for c in claim_result.scalars().all()
+        ],
+        "chunks_count": len(chunks),
+        "extracted_text": "\n\n".join(c.chunk_text for c in chunks),
+        "processing_traces": [
+            {"stage": t.stage, "input_summary": t.input_summary,
+             "output_summary": t.output_summary, "latency_ms": t.latency_ms,
+             "created_at": str(t.created_at) if t.created_at else None}
+            for t in trace_result.scalars().all()
+        ],
     }
+
+
+@app.get("/api/tenants/{tenant_id}/documents/{document_id}/file")
+async def download_document_file(tenant_id: str, document_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Document).where(Document.id == document_id, Document.tenant_id == tenant_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if not doc.raw_storage_path or not os.path.exists(doc.raw_storage_path):
+        raise HTTPException(404, "File not found on disk")
+    ext = os.path.splitext(doc.source_filename)[1].lower() if doc.source_filename else ".pdf"
+    media_types = {".pdf": "application/pdf", ".csv": "text/csv", ".txt": "text/plain"}
+    content_type = media_types.get(ext, "application/octet-stream")
+
+    with open(doc.raw_storage_path, "rb") as f:
+        file_bytes = f.read()
+
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{doc.source_filename}"',
+            "Content-Type": content_type,
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @app.delete("/api/tenants/{tenant_id}/documents/{document_id}")
