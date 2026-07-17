@@ -1,0 +1,82 @@
+services:
+  # Backend API
+  - type: web
+    name: meddocs-api
+    runtime: docker
+    dockerfilePath: Dockerfile.backend
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: meddocs-db
+          property: connectionString
+      - key: DATABASE_URL_SYNC
+        fromDatabase:
+          name: meddocs-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_REASONING_MODEL
+        value: llama-3.1-8b-instant
+      - key: GROQ_CLASSIFICATION_MODEL
+        value: llama-3.1-8b-instant
+      - key: EMBEDDING_MODEL
+        value: BAAI/bge-small-en-v1.5
+      - key: EMBEDDING_DIM
+        value: 384
+      - key: STORAGE_PATH
+        value: /tmp/storage
+      - key: PORT
+        value: 8000
+    healthCheckPath: /docs
+    autoDeploy: true
+
+  # Celery Worker
+  - type: worker
+    name: meddocs-worker
+    runtime: docker
+    dockerfilePath: Dockerfile.worker
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: meddocs-db
+          property: connectionString
+      - key: DATABASE_URL_SYNC
+        fromDatabase:
+          name: meddocs-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_REASONING_MODEL
+        value: llama-3.1-8b-instant
+      - key: GROQ_CLASSIFICATION_MODEL
+        value: llama-3.1-8b-instant
+      - key: EMBEDDING_MODEL
+        value: BAAI/bge-small-en-v1.5
+      - key: EMBEDDING_DIM
+        value: 384
+      - key: STORAGE_PATH
+        value: /tmp/storage
+    autoDeploy: true
+
+  # Frontend
+  - type: web
+    name: meddocs-frontend
+    runtime: docker
+    dockerfilePath: Dockerfile.frontend
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://meddocs-api.onrender.com
+      - key: NEXT_PUBLIC_MONITOR_URL
+        value: https://meddocs-api.onrender.com
+    healthCheckPath: /
+    autoDeploy: true
+
+  # PostgreSQL Database
+  - type: pgsql
+    name: meddocs-db
+    database: meddocs
+    ipAllowList: []

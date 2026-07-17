@@ -1,5 +1,5 @@
-const API = "http://localhost:8000";
-const MONITOR_API = "http://localhost:8001";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const MONITOR_API = process.env.NEXT_PUBLIC_MONITOR_URL || "http://localhost:8001";
 
 async function fetchAPI(url: string, options?: RequestInit, baseUrl?: string) {
   const base = baseUrl || API;
