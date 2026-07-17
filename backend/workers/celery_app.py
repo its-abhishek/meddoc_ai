@@ -12,10 +12,20 @@ from config import get_settings
 
 settings = get_settings()
 
+
+def _fix_redis_url(url: str) -> str:
+    if url.startswith("rediss://") and "ssl_cert_reqs" not in url:
+        separator = "&" if "?" in url else "?"
+        url += f"{separator}ssl_cert_reqs=none"
+    return url
+
+
+redis_url = _fix_redis_url(settings.REDIS_URL)
+
 celery_app = Celery(
     "meddocs",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=redis_url,
+    backend=redis_url,
 )
 
 celery_app.conf.update(
@@ -31,5 +41,3 @@ celery_app.conf.update(
 
 # Import tasks to register them
 import workers.tasks  # noqa
-
-# All thread limits set to 1 for sentence-transformers on ARM
