@@ -15,8 +15,6 @@ services:
         value: "384"
       - key: STORAGE_PATH
         value: /tmp/storage
-      - key: PORT
-        value: "8000"
     healthCheckPath: /docs
     autoDeploy: true
 
