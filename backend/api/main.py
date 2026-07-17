@@ -357,7 +357,7 @@ async def delete_document(tenant_id: str, document_id: str, db: AsyncSession = D
 
     await db.delete(doc)
     await db.flush()
-    _log_audit(tenant_id, document_id, doc.patient_id, "delete_document", db)
+    await _log_audit(tenant_id, document_id, doc.patient_id, "delete_document", db)
     await db.flush()
     return {"deleted": document_id}
 
@@ -366,7 +366,7 @@ async def delete_document(tenant_id: str, document_id: str, db: AsyncSession = D
 
 @app.get("/api/tenants/{tenant_id}/patients/{patient_id}/lab-results")
 async def get_lab_results(tenant_id: str, patient_id: str, db: AsyncSession = Depends(get_db)):
-    _log_audit(tenant_id, None, patient_id, "read_lab_results", db)
+    await _log_audit(tenant_id, None, patient_id, "read_lab_results", db)
     result = await db.execute(
         select(LabResult).where(
             LabResult.tenant_id == tenant_id,
@@ -386,7 +386,7 @@ async def get_lab_results(tenant_id: str, patient_id: str, db: AsyncSession = De
 
 @app.get("/api/tenants/{tenant_id}/patients/{patient_id}/prescriptions")
 async def get_prescriptions(tenant_id: str, patient_id: str, db: AsyncSession = Depends(get_db)):
-    _log_audit(tenant_id, None, patient_id, "read_prescriptions", db)
+    await _log_audit(tenant_id, None, patient_id, "read_prescriptions", db)
     result = await db.execute(
         select(Prescription).where(
             Prescription.tenant_id == tenant_id,
@@ -406,7 +406,7 @@ async def get_prescriptions(tenant_id: str, patient_id: str, db: AsyncSession = 
 
 @app.get("/api/tenants/{tenant_id}/patients/{patient_id}/claims")
 async def get_claims(tenant_id: str, patient_id: str, db: AsyncSession = Depends(get_db)):
-    _log_audit(tenant_id, None, patient_id, "read_claims", db)
+    await _log_audit(tenant_id, None, patient_id, "read_claims", db)
     result = await db.execute(
         select(Claim).where(
             Claim.tenant_id == tenant_id,
@@ -428,7 +428,7 @@ async def get_claims(tenant_id: str, patient_id: str, db: AsyncSession = Depends
 
 @app.get("/api/tenants/{tenant_id}/patients/{patient_id}/trends/{test_name}")
 async def get_lab_trends(tenant_id: str, patient_id: str, test_name: str, db: AsyncSession = Depends(get_db)):
-    _log_audit(tenant_id, None, patient_id, f"read_trends:{test_name}", db)
+    await _log_audit(tenant_id, None, patient_id, f"read_trends:{test_name}", db)
     result = await db.execute(
         select(LabResult).where(
             LabResult.tenant_id == tenant_id,
@@ -537,7 +537,7 @@ async def query_patient(
     req: QueryRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    _log_audit(tenant_id, None, patient_id, "query", db)
+    await _log_audit(tenant_id, None, patient_id, "query", db)
     from pipeline.agents.query_agent import multi_step_query
     result = await multi_step_query(
         question=req.question,
@@ -552,7 +552,7 @@ async def query_patient(
 
 @app.get("/api/tenants/{tenant_id}/patients/{patient_id}/summary")
 async def get_summary(tenant_id: str, patient_id: str, db: AsyncSession = Depends(get_db)):
-    _log_audit(tenant_id, None, patient_id, "read_summary", db)
+    await _log_audit(tenant_id, None, patient_id, "read_summary", db)
     patient_result = await db.execute(
         select(Patient).where(Patient.id == patient_id, Patient.tenant_id == tenant_id)
     )
@@ -1205,7 +1205,7 @@ async def download_report_pdf(tenant_id: str, report_id: str, db: AsyncSession =
 
 @app.get("/api/tenants/{tenant_id}/patients/{patient_id}/export")
 async def export_patient(tenant_id: str, patient_id: str, db: AsyncSession = Depends(get_db)):
-    _log_audit(tenant_id, None, patient_id, "export", db)
+    await _log_audit(tenant_id, None, patient_id, "export", db)
 
     patient_result = await db.execute(
         select(Patient).where(Patient.id == patient_id, Patient.tenant_id == tenant_id)
@@ -1278,7 +1278,7 @@ async def health():
 
 # ── Internal helpers ───────────────────────────────────────────
 
-async def _log_audit(tenant_id, user_id, patient_id, action, db):
+async def await _log_audit(tenant_id, user_id, patient_id, action, db):
     try:
         audit = AuditLog(
             id=str(uuid.uuid4()),
