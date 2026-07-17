@@ -198,7 +198,7 @@ async def upload_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    from utils.cloud_storage import upload_file
+    from utils.cloud_storage import CloudStorageConfigurationError, upload_file
 
     allowed_types = {".pdf", ".csv"}
     ext = os.path.splitext(file.filename)[1].lower()
@@ -212,8 +212,14 @@ async def upload_document(
 
     doc_id = str(uuid.uuid4())
 
-    # Upload to Cloudinary
-    public_id = upload_file(content, file.filename, doc_id, tenant_id)
+    try:
+        public_id = upload_file(content, file.filename, doc_id, tenant_id)
+    except CloudStorageConfigurationError as exc:
+        logger.error("Document upload blocked: %s", exc)
+        raise HTTPException(503, "Document storage is not configured") from exc
+    except Exception as exc:
+        logger.exception("Cloudinary upload failed for document %s", doc_id)
+        raise HTTPException(502, "Document storage upload failed") from exc
 
     doc = Document(
         id=doc_id,

@@ -15,6 +15,12 @@ services:
         value: "384"
       - key: STORAGE_PATH
         value: /tmp/storage
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
     healthCheckPath: /docs
     autoDeploy: true
 
@@ -34,6 +40,12 @@ services:
         value: "384"
       - key: STORAGE_PATH
         value: /tmp/storage
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
     autoDeploy: true
 
   # Frontend
