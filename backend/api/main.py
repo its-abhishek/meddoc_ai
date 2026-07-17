@@ -23,13 +23,6 @@ from models.models import (
     DocumentChunk, ManualReviewQueue, AuditLog, RiskFlag,
     Report, ReportBlock, Notification, User, ProcessingTrace, MonitoringEvent,
 )
-from workers.tasks import process_document
-from core.embeddings import embed_text
-from core.llm_client import call_llm, call_llm_structured
-from core.events import emit_event
-from pipeline.agents.risk_flagger import risk_flagging_agent, check_interaction_rules
-from pipeline.agents.query_agent import multi_step_query
-from pipeline.agents.report_generator import generate_report, should_generate_report, has_stale_report
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -38,7 +31,7 @@ app = FastAPI(title="MedDocs AI", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -233,8 +226,10 @@ async def upload_document(
     db.add(doc)
     await db.flush()
 
+    from core.events import emit_event
     emit_event(tenant_id, doc_id, "pipeline", "started", f"uploaded {file.filename}")
 
+    from workers.tasks import process_document
     process_document.delay(doc_id, tenant_id, patient_id)
 
     return {"document_id": doc_id, "status": "queued", "filename": file.filename}
@@ -472,6 +467,7 @@ async def get_lab_trends(tenant_id: str, patient_id: str, test_name: str, db: As
         "Provide a brief one-sentence clinical commentary on this trend. "
         "This is AI-generated commentary — always verify with a clinician."
     )
+    from core.llm_client import call_llm
     commentary = call_llm(prompt=commentary_prompt, system_prompt="You are a clinical data commentator.")
 
     return {
@@ -542,6 +538,7 @@ async def query_patient(
     db: AsyncSession = Depends(get_db),
 ):
     _log_audit(tenant_id, None, patient_id, "query", db)
+    from pipeline.agents.query_agent import multi_step_query
     result = await multi_step_query(
         question=req.question,
         tenant_id=tenant_id,
