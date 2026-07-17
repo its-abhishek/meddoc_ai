@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = 384
     STORAGE_PATH: str = "./storage"
     MAX_UPLOAD_SIZE_MB: int = 20
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
 
     class Config:
         env_file = _env_file

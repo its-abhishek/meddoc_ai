@@ -205,6 +205,8 @@ async def upload_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
+    from utils.cloud_storage import upload_file
+
     allowed_types = {".pdf", ".csv"}
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in allowed_types:
@@ -216,12 +218,9 @@ async def upload_document(
         raise HTTPException(400, f"File too large: {len(content)} bytes. Max: {max_size}")
 
     doc_id = str(uuid.uuid4())
-    tenant_dir = os.path.join(settings.STORAGE_PATH, tenant_id)
-    os.makedirs(tenant_dir, exist_ok=True)
-    file_path = os.path.join(tenant_dir, f"{doc_id}{ext}")
 
-    with open(file_path, "wb") as f:
-        f.write(content)
+    # Upload to Cloudinary
+    public_id = upload_file(content, file.filename, doc_id, tenant_id)
 
     doc = Document(
         id=doc_id,
@@ -229,7 +228,7 @@ async def upload_document(
         patient_id=patient_id,
         source_filename=file.filename,
         upload_status="queued",
-        raw_storage_path=file_path,
+        raw_storage_path=public_id,
     )
     db.add(doc)
     await db.flush()
@@ -323,34 +322,29 @@ async def get_document(tenant_id: str, document_id: str, db: AsyncSession = Depe
 
 @app.get("/api/tenants/{tenant_id}/documents/{document_id}/file")
 async def download_document_file(tenant_id: str, document_id: str, db: AsyncSession = Depends(get_db)):
+    from utils.cloud_storage import get_file_url
+
     result = await db.execute(
         select(Document).where(Document.id == document_id, Document.tenant_id == tenant_id)
     )
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document not found")
-    if not doc.raw_storage_path or not os.path.exists(doc.raw_storage_path):
-        raise HTTPException(404, "File not found on disk")
+    if not doc.raw_storage_path:
+        raise HTTPException(404, "No file associated with this document")
+
+    url = get_file_url(doc.raw_storage_path)
     ext = os.path.splitext(doc.source_filename)[1].lower() if doc.source_filename else ".pdf"
     media_types = {".pdf": "application/pdf", ".csv": "text/csv", ".txt": "text/plain"}
     content_type = media_types.get(ext, "application/octet-stream")
 
-    with open(doc.raw_storage_path, "rb") as f:
-        file_bytes = f.read()
-
-    return StreamingResponse(
-        iter([file_bytes]),
-        media_type=content_type,
-        headers={
-            "Content-Disposition": f'inline; filename="{doc.source_filename}"',
-            "Content-Type": content_type,
-            "Cache-Control": "no-cache",
-        },
-    )
+    return {"url": url, "content_type": content_type}
 
 
 @app.delete("/api/tenants/{tenant_id}/documents/{document_id}")
 async def delete_document(tenant_id: str, document_id: str, db: AsyncSession = Depends(get_db)):
+    from utils.cloud_storage import delete_file
+
     result = await db.execute(
         select(Document).where(Document.id == document_id, Document.tenant_id == tenant_id)
     )
@@ -363,8 +357,8 @@ async def delete_document(tenant_id: str, document_id: str, db: AsyncSession = D
             sqldelete(model).where(model.document_id == document_id, model.tenant_id == tenant_id)
         )
 
-    if doc.raw_storage_path and os.path.exists(doc.raw_storage_path):
-        os.remove(doc.raw_storage_path)
+    if doc.raw_storage_path:
+        delete_file(doc.raw_storage_path)
 
     await db.delete(doc)
     await db.flush()

@@ -48,6 +48,19 @@ def process_document(self, document_id: str, tenant_id: str, patient_id: str):
         session.commit()
 
         file_path = doc.raw_storage_path
+        # If file_path is a Cloudinary public_id, download to temp file
+        if not os.path.exists(file_path):
+            from utils.cloud_storage import get_file_url
+            import requests, tempfile
+            url = get_file_url(file_path)
+            resp = requests.get(url)
+            resp.raise_for_status()
+            suffix = os.path.splitext(doc.source_filename)[1] if doc.source_filename else ".pdf"
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            tmp.write(resp.content)
+            tmp.close()
+            file_path = tmp.name
+
         raw_text = parse_document(file_path)
 
         if not raw_text:

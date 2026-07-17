@@ -15,6 +15,7 @@ export default function DocumentDetailPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [csvData, setCsvData] = useState<string[][] | null>(null);
   const [csvLoading, setCsvLoading] = useState(false);
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
 
   useEffect(() => { loadDocument(); }, [docId]);
 
@@ -22,26 +23,30 @@ export default function DocumentDetailPage() {
     try {
       const data = await api.getDocument(getTenantId(), docId);
       setDoc(data);
+      // Pre-fetch the file URL
+      const fileData = await api.getDocumentFileUrl(getTenantId(), docId);
+      setFileUrl(fileData.url);
     } catch (e) { console.error("Failed to load document:", e); }
     setLoading(false);
   }
 
-  function downloadFile() {
+  async function downloadFile() {
+    if (!fileUrl) return;
     const a = document.createElement("a");
-    a.href = api.getDocumentFileUrl(getTenantId(), docId);
+    a.href = fileUrl;
     a.download = doc?.filename || "document";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   }
 
-  function openPreview() {
+  async function openPreview() {
     setShowPreview(true);
     const ext = doc.filename?.split(".").pop()?.toLowerCase();
-    if (ext === "csv") {
+    if (ext === "csv" && fileUrl) {
       setCsvLoading(true);
       setCsvData(null);
-      fetch(api.getDocumentFileUrl(getTenantId(), docId))
+      fetch(fileUrl)
         .then((r) => r.text())
         .then((text) => {
           const rows = text.split("\n").filter((r: string) => r.trim()).map((r: string) => r.split(","));
@@ -60,7 +65,6 @@ export default function DocumentDetailPage() {
   if (loading) return <div className="text-center py-12 text-gray-500">Loading document...</div>;
   if (!doc) return <div className="text-center py-12 text-gray-500">Document not found.</div>;
 
-  const fileUrl = api.getDocumentFileUrl(getTenantId(), docId);
   const isCSV = doc.filename?.toLowerCase().endsWith(".csv");
 
   return (
@@ -117,8 +121,10 @@ export default function DocumentDetailPage() {
                 ) : (
                   <div className="flex items-center justify-center h-full text-gray-500">No data</div>
                 )
-              ) : (
+              ) : fileUrl ? (
                 <iframe src={fileUrl} className="w-full h-full border-0" title={doc.filename} />
+              ) : (
+                <div className="flex items-center justify-center h-full text-gray-500">Loading file...</div>
               )}
             </div>
           </div>

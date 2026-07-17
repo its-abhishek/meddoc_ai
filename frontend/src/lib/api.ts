@@ -57,7 +57,7 @@ export const api = {
   getDocument: (tenantId: string, documentId: string) =>
     fetchAPI(`/api/tenants/${tenantId}/documents/${documentId}`),
   getDocumentFileUrl: (tenantId: string, documentId: string) =>
-    `/api/tenants/${tenantId}/documents/${documentId}/file`,
+    fetchAPI(`/api/tenants/${tenantId}/documents/${documentId}/file`),
   deleteDocument: (tenantId: string, documentId: string) =>
     fetchAPI(`/api/tenants/${tenantId}/documents/${documentId}`, { method: "DELETE" }),
 
