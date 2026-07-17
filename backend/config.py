@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     class Config:
         env_file = _env_file
 
+    def get_database_url(self) -> str:
+        url = self.DATABASE_URL
+        if url and not url.startswith("postgresql+asyncpg://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://")
+        return url
+
+    def get_database_url_sync(self) -> str:
+        url = self.DATABASE_URL_SYNC
+        if url and url.startswith("postgresql+asyncpg://"):
+            url = url.replace("postgresql+asyncpg://", "postgresql://")
+        return url
+
 
 @lru_cache
 def get_settings() -> Settings:

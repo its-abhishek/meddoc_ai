@@ -7,11 +7,11 @@ from config import get_settings
 settings = get_settings()
 
 # Async engine for FastAPI
-engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=20, max_overflow=10)
+engine = create_async_engine(settings.get_database_url(), echo=False, pool_size=20, max_overflow=10)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 # Sync engine for Celery worker
-sync_engine = create_engine(settings.DATABASE_URL_SYNC, echo=False, pool_size=5, max_overflow=5)
+sync_engine = create_engine(settings.get_database_url_sync(), echo=False, pool_size=5, max_overflow=5)
 sync_session_factory = sessionmaker(bind=sync_engine)
 
 
